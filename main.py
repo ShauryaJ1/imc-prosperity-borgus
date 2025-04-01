@@ -126,7 +126,49 @@ class Logger:
 logger = Logger()
 
 
+class Strategy:
+    @staticmethod
+    def arb(trader, state: TradingState, symbol, fair_price):
+        orders = []
+
+        # try:
+
+        for ask_price in state.order_depths[symbol].sell_orders:
+            ask_amount = state.order_depths[symbol].sell_orders[ask_price]
+            if ask_price < fair_price:
+                buy_amount = min(-ask_amount, trader.position_limit[symbol] - state.position[symbol])
+                if buy_amount > 0:
+                    orders.append(Order(symbol, int(ask_price), int(buy_amount)))
+                    state.position[symbol] += buy_amount
+
+            elif ask_price == fair_price:
+                if state.position[symbol] < 0:
+                    buy_amount = min(-ask_amount, -state.position[symbol])
+                    orders.append(Order(symbol, int(ask_price), int(buy_amount)))
+                    state.position[symbol] += buy_amount
+
+        for bid_price in state.order_depths[symbol].buy_orders:
+            bid_amount = state.order_depths[symbol].buy_orders[bid_price]
+            if bid_price > fair_price:
+                sell_amount = min(bid_amount, trader.position_limit[symbol] + state.position[symbol])
+                if sell_amount > 0:
+                    orders.append(Order(symbol, int(bid_price), -int(sell_amount)))
+                    state.position[symbol] -= sell_amount
+
+            elif bid_price == fair_price:
+                if state.position[symbol] > 0:
+                    sell_amount = min(bid_amount, state.position[symbol])
+                    orders.append(Order(symbol, int(bid_price), -int(sell_amount)))
+                    state.position -= sell_amount
+
+        # except:
+        #     raise Exception(f"{trader.position_limit} + {symbol} + {type(symbol)})")
+
+        return orders
+
 class Trader:
+
+
     def __init__(self):
         self.risk = 0.14
         self.profit_target = {"KELP": 2, "RAINFOREST_RESIN": 1}
@@ -138,7 +180,7 @@ class Trader:
             "KELP": 5,
             "RAINFOREST_RESIN": 10
         }
-        self.ema_param = 0.5
+        self.ema_param = 0.2
         self.default_prices = {
             "KELP":2000,
             "RAINFOREST_RESIN":10000
@@ -164,7 +206,7 @@ class Trader:
             "RAINFOREST_RESIN": 7
         }
         self.idealProfits = {
-            "KELP": 1.1,
+            "KELP": 1.24,
             "RAINFOREST_RESIN": 4
         }
 
@@ -228,7 +270,7 @@ class Trader:
         ask_volume = - self.position_limit["KELP"] - current_position
 
         orders = []
-        combined_price = 1.1*self.ema_prices["KELP"] - 0.1*self.mcginley_prices["KELP"]
+        combined_price = 0.95*self.ema_prices["KELP"] + 0.05*self.mcginley_prices["KELP"]
         if current_position == 0:
             # Not long nor short
             orders.append(Order("KELP", math.floor(combined_price - self.idealProfits["KELP"] / 2), bid_volume))
@@ -306,6 +348,10 @@ class Trader:
         bid_volume = self.position_limit["KELP"] - current_position
         ask_volume = - self.position_limit["KELP"] - current_position
 
+        # -50 -14 -> 50 - (-14) = 64
+        # -50 14 -> 50 - 14 = 36
+        # 50 14,
+
         orders = []
 
         if current_position == 0:
@@ -330,7 +376,7 @@ class Trader:
         # print(self.position_limit)
         # Only method required. It takes all buy and sell orders for all symbols as an input, and outputs a list of orders to be sent
         for product in self.products:
-            # self.update_ema_prices(product, state)
+            self.update_ema_prices(product, state)
             self.update_mcginley(product, state)
             self.update_spreads(product, state)
         # print(self.mcginley_prices)
@@ -340,7 +386,10 @@ class Trader:
         # print("Mid price of : ", self.get_price)
         orders = {}
 
-        # orders["KELP"] = self.kelp_trading_mcginley(state)
+        orders["KELP"] = []
+        orders["KELP"].extend(Strategy.arb(self, state, "KELP", self.mcginley_prices["KELP"]))
+
+        orders["KELP"] = self.kelp_trading_mcginley(state)
         # orders.extend(self.resin_trading(state))
         orders["RAINFOREST_RESIN"] = self.resin_trading(state)
 

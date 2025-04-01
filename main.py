@@ -216,8 +216,8 @@ class Trader:
         # bid_volume = self.volumes["RAINFOREST_RESIN"]
         # ask_volume = self.volumes["RAINFOREST_RESIN"]
         orders = []
-        orders.append(Order("RAINFOREST_RESIN", math.floor(self.default_prices["RAINFOREST_RESIN"] - self.idealProfits["RAINFOREST_RESIN"]/2 - self.spreads["RAINFOREST_RESIN"]/2), bid_volume))
-        orders.append(Order("RAINFOREST_RESIN", math.ceil(self.default_prices["RAINFOREST_RESIN"] + self.idealProfits["RAINFOREST_RESIN"]/2 + self.spreads["RAINFOREST_RESIN"]/2), ask_volume))
+        orders.append(Order("RAINFOREST_RESIN", math.floor(self.default_prices["RAINFOREST_RESIN"] -1 - self.spreads["RAINFOREST_RESIN"]/2), bid_volume))
+        orders.append(Order("RAINFOREST_RESIN", math.ceil(self.default_prices["RAINFOREST_RESIN"] + 1 + self.spreads["RAINFOREST_RESIN"]/2), ask_volume))
         return orders
     def kelp_trading_combined(self,state:TradingState):
         if "KELP" not in state.position:
@@ -340,7 +340,7 @@ class Trader:
         # print("Mid price of : ", self.get_price)
         orders = {}
 
-        orders["KELP"] = self.kelp_trading_mcginley(state)
+        # orders["KELP"] = self.kelp_trading_mcginley(state)
         # orders.extend(self.resin_trading(state))
         orders["RAINFOREST_RESIN"] = self.resin_trading(state)
 

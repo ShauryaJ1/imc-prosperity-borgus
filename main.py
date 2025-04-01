@@ -132,11 +132,16 @@ class Strategy:
         orders = []
 
         # try:
+        if symbol not in state.position:
+            state.position[symbol] = 0
 
         for ask_price in state.order_depths[symbol].sell_orders:
             ask_amount = state.order_depths[symbol].sell_orders[ask_price]
             if ask_price < fair_price:
-                buy_amount = min(-ask_amount, trader.position_limit[symbol] - state.position[symbol])
+                try:
+                    buy_amount = min(-ask_amount, trader.position_limit[symbol] - state.position[symbol])
+                except:
+                    raise Exception(f"{trader.position_limit} + {symbol}")
                 if buy_amount > 0:
                     orders.append(Order(symbol, int(ask_price), int(buy_amount)))
                     state.position[symbol] += buy_amount

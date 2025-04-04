@@ -168,7 +168,9 @@ class Trader:
             "KELP": 1.1,
             "RAINFOREST_RESIN": 4
         }
-
+        self.past_values = []
+        self.past_abs = []
+        self.kama = None
         self.mcginley_period = 8
 
         self.lower_limit = -50
@@ -187,6 +189,25 @@ class Trader:
     def update_spreads(self, symbol, state):
         for symbol in self.products:
             self.spreads[symbol] = min(state.order_depths[symbol].sell_orders) - max(state.order_depths[symbol].buy_orders)
+    def update_past(self, symbol,state):
+        
+        if len(self.past_values) > 0:
+
+            self.past_abs.append(abs(self.past_values[-1] - self.get_price(symbol,state)))
+        self.past_values.append(self.get_price(symbol,state))
+        if len(self.past_values) > 10:
+            self.past_values.pop(0)
+            self.past_abs.pop(0)
+    def update_kama(self, state):
+        if len(self.past_values) < 10:
+            self.kama = self.get_price("KELP", state)
+        else:
+            print(self.past_values)
+            print(self.past_abs)
+            if sum(self.past_abs) == 0 or abs(self.get_price("KELP",state)-self.past_values[0]) == 0:
+                self.kama = self.get_price("KELP", state)
+            else:
+                self.kama+=(self.get_price("KELP",state)-self.kama)*((abs(self.get_price("KELP",state)-self.past_values[0])/sum(self.past_abs))*(2/ (2+1) - 2/(30+1)) +2/ (30+1))**2
     def update_ema_prices(self, symbol, state):
             mid_price = self.get_price(symbol, state)
 
@@ -251,7 +272,24 @@ class Trader:
             orders.append(Order("KELP", math.ceil(combined_price+ self.idealProfits["KELP"]), ask_volume))
 
         return orders
-    # def 
+    def kelp_ama_trading(self,state:TradingState):
+        if "KELP" not in state.position:
+            current_position = 0
+        else:
+            current_position = state.position["KELP"]
+        # current_position = pos
+        bid_volume = self.position_limit["KELP"] - current_position
+        ask_volume = - self.position_limit["KELP"] - current_position
+
+        # self.idealProfits["KELP"] = 1.8 * (2.71828 ** (abs(current_position / 50) * -1 * 2.02))
+        self.idealProfits["KELP"] = 1.5
+
+        orders = []
+        if self.lower_limit <= current_position <= self.upper_limit:
+            orders.append(Order("KELP", math.floor(self.kama - self.idealProfits["KELP"] / 2), bid_volume))
+            orders.append(Order("KELP", math.ceil(self.kama + self.idealProfits["KELP"] / 2), ask_volume))
+        return orders
+
     def kelp_trading_mcginley(self,state:TradingState):
         if "KELP" not in state.position:
             current_position = 0
@@ -340,9 +378,11 @@ class Trader:
         # print(self.position_limit)
         # Only method required. It takes all buy and sell orders for all symbols as an input, and outputs a list of orders to be sent
         for product in self.products:
-            self.update_ema_prices(product, state)
+            # self.update_ema_prices(product, state)
             self.update_mcginley(product, state)
-            self.update_spreads(product, state)
+            # self.update_spreads(product, state)
+        # self.update_kama(state)
+        # self.update_past("KELP", state)
         # print(self.mcginley_prices)
         # print(self.mcginley_prices["KELP"])
         logger.print(min(state.order_depths["KELP"].sell_orders) - max(state.order_depths["KELP"].buy_orders) + self.profit_target["KELP"])
@@ -353,8 +393,9 @@ class Trader:
         # orders["KELP"] = []
         # ords, pos = Strategy.arb(self, state, "KELP", self.get_price("KELP", state))
         # orders["KELP"].extend(ords)
-
+       
         orders["KELP"] = self.kelp_trading_mcginley(state)
+       
         # orders.extend(self.resin_trading(state    ))
         orders["RAINFOREST_RESIN"] = self.resin_trading(state)
 

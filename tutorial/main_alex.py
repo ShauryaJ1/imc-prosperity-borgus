@@ -163,9 +163,9 @@ PARAMS = {
         "join_edge": 0,
         "default_edge": 1,
         "momentum_weight": 0.08,
-        "history_window": 30,  #3 for momentum, trying EMA rn
+        "history_window": 20,  #3 for momentum, #20 for ema
         "momentum_cutoff": 0.05,
-        "ema_param": 0.3,  #0.3 gives 3,824
+        "ema_param": 0.65,  #0.6 gives 4,882
         "fft_cutoff": 0.2
     },
 }

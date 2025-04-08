@@ -125,54 +125,7 @@ class Logger:
 
 logger = Logger()
 
-
-class Strategy:
-    @staticmethod
-    def arb(trader, state: TradingState, symbol, fair_price):
-        orders = []
-
-        # try:
-        if symbol not in state.position:
-            state.position[symbol] = 0
-
-        for ask_price in state.order_depths[symbol].sell_orders:
-            ask_amount = state.order_depths[symbol].sell_orders[ask_price]
-            if ask_price < fair_price:
-                try:
-                    buy_amount = min(-ask_amount, trader.position_limit[symbol] - state.position[symbol])
-                except:
-                    raise Exception(f"{trader.position_limit} + {symbol}")
-                if buy_amount > 0:
-                    orders.append(Order(symbol, int(ask_price), int(buy_amount)))
-                    state.position[symbol] += buy_amount
-
-            elif ask_price == fair_price:
-                if state.position[symbol] < 0:
-                    buy_amount = min(-ask_amount, -state.position[symbol])
-                    orders.append(Order(symbol, int(ask_price), int(buy_amount)))
-                    state.position[symbol] += buy_amount
-
-        for bid_price in state.order_depths[symbol].buy_orders:
-            bid_amount = state.order_depths[symbol].buy_orders[bid_price]
-            if bid_price > fair_price:
-                sell_amount = min(bid_amount, trader.position_limit[symbol] + state.position[symbol])
-                if sell_amount > 0:
-                    orders.append(Order(symbol, int(bid_price), -int(sell_amount)))
-                    state.position[symbol] -= sell_amount
-
-            elif bid_price == fair_price:
-                if state.position[symbol] > 0:
-                    sell_amount = min(bid_amount, state.position[symbol])
-                    orders.append(Order(symbol, int(bid_price), -int(sell_amount)))
-                    state.position -= sell_amount
-
-        # except:
-        #     raise Exception(f"{trader.position_limit} + {symbol} + {type(symbol)})")
-
-        return orders
-
 class Trader:
-
 
     def __init__(self):
         self.risk = 0.14
@@ -211,9 +164,14 @@ class Trader:
             "RAINFOREST_RESIN": 7
         }
         self.idealProfits = {
-            "KELP": 1.24,
+            "KELP": 1.1,
             "RAINFOREST_RESIN": 4
         }
+
+        self.mcginley_period = 8
+
+        self.lower_limit = -50
+        self.upper_limit = 50
 
     def get_price(self,symbol, state: TradingState):
         # if self.ema_prices[symbol] is None:
@@ -240,7 +198,7 @@ class Trader:
         if self.mcginley_prices[symbol] is None:
             self.mcginley_prices[symbol] = mid_price
         else:
-            self.mcginley_prices[symbol] = self.mcginley_prices[symbol]+(mid_price-self.mcginley_prices[symbol])/(0.6*10*(mid_price/self.mcginley_prices[symbol])**4)
+            self.mcginley_prices[symbol] = self.mcginley_prices[symbol]+(mid_price-self.mcginley_prices[symbol])/(0.57*self.mcginley_period*(mid_price/self.mcginley_prices[symbol])**4)
     def resin_trading(self,state:TradingState):
         if "RAINFOREST_RESIN" not in state.position:
             current_position = 0
@@ -250,9 +208,43 @@ class Trader:
         ask_volume = - self.position_limit["RAINFOREST_RESIN"] - current_position
         
         orders = []
-        orders.append(Order("RAINFOREST_RESIN", math.floor(self.default_prices["RAINFOREST_RESIN"] - self.idealProfits["RAINFOREST_RESIN"]/2), bid_volume))
-        orders.append(Order("RAINFOREST_RESIN", math.ceil(self.default_prices["RAINFOREST_RESIN"] + self.idealProfits["RAINFOREST_RESIN"]/2), ask_volume))
+
+        if (self.default_prices["RAINFOREST_RESIN"] + self.idealProfits["RAINFOREST_RESIN"] // 2 in state.order_depths["RAINFOREST_RESIN"].buy_orders):
+            orders.append(Order("RAINFOREST_RESIN", math.floor(
+                self.default_prices["RAINFOREST_RESIN"] + self.idealProfits["RAINFOREST_RESIN"] / 2), ask_volume))
+
+        else:
+            if current_position > 0:
+                orders.append(Order("RAINFOREST_RESIN", self.default_prices["RAINFOREST_RESIN"], -current_position))
+
+        # orders.append(Order("RAINFOREST_RESIN", math.floor(
+        #     self.default_prices["RAINFOREST_RESIN"]), -1))
+
+
+        if (self.default_prices["RAINFOREST_RESIN"] - self.idealProfits["RAINFOREST_RESIN"] // 2 in state.order_depths["RAINFOREST_RESIN"].sell_orders):
+            orders.append(Order("RAINFOREST_RESIN", math.ceil(
+                self.default_prices["RAINFOREST_RESIN"] - self.idealProfits["RAINFOREST_RESIN"]/2), bid_volume))
+
+        # orders.append(Order("RAINFOREST_RESIN", math.ceil(
+        #     self.default_prices["RAINFOREST_RESIN"]), 1))
+
+        else:
+            if current_position < 0:
+                orders.append(Order("RAINFOREST_RESIN", self.default_prices["RAINFOREST_RESIN"], current_position))
+
+        # if self.default_prices["RAINFOREST_RESIN"] in state.order_depths["RAINFOREST_RESIN"].buy_orders:
+        #     if current_position > 0:
+        #         orders.append(Order("RAINFOREST_RESIN", self.default_prices["RAINFOREST_RESIN"], -current_position))
+        #
+        # if self.default_prices["RAINFOREST_RESIN"] in state.order_depths["RAINFOREST_RESIN"].sell_orders:
+        #     if current_position < 0:
+        #         orders.append(Order("RAINFOREST_RESIN", self.default_prices["RAINFOREST_RESIN"], current_position))
+
+        if state.timestamp > 100:
+            return []
+
         return orders
+
     def resin_risk_spread(self,state:TradingState):
         if "RAINFOREST_RESIN" not in state.position:
             current_position = 0
@@ -297,25 +289,52 @@ class Trader:
             current_position = 0
         else:
             current_position = state.position["KELP"]
-        bid_volume = self.position_limit["KELP"] - current_position
-        ask_volume = - self.position_limit["KELP"] - current_position
+        # # current_position = pos
+        bid_volume = round((self.position_limit["KELP"] - current_position) *
+                           (1 - 0 * 2.71828 ** abs(-current_position / self.position_limit["KELP"] * 0.5)))
+        ask_volume = round((-self.position_limit["KELP"] - current_position) *
+                           (1 - 0 * 2.71828 ** abs(-current_position / self.position_limit["KELP"] * 0.5)))
+
+        self.idealProfits["KELP"] = 1.8 * (2.71828 ** (abs(current_position / 50) * -1 * 2.02))
 
         orders = []
 
-        if current_position == 0:
-            # Not long nor short
-            orders.append(Order("KELP", math.floor(self.mcginley_prices["KELP"] - self.idealProfits["KELP"] / 2), bid_volume))
-            orders.append(Order("KELP", math.ceil(self.mcginley_prices["KELP"] + self.idealProfits["KELP"] / 2), ask_volume))
-        
-        if current_position > 0:
-            # Long position
-            orders.append(Order("KELP", math.floor(self.mcginley_prices["KELP"] - self.idealProfits["KELP"]), bid_volume))
-            orders.append(Order("KELP", math.ceil(self.mcginley_prices["KELP"]), ask_volume))
+        # if state.timestamp >= 200000 - 2000:
+        #     orders.append(Order("KELP", self.mcginley_prices["KELP"] - 5, -self.upper_limit * 2))
+        #     return orders
 
-        if current_position < 0:
-            # Short position
-            orders.append(Order("KELP", math.floor(self.mcginley_prices["KELP"]), bid_volume))
-            orders.append(Order("KELP", math.ceil(self.mcginley_prices["KELP"] + self.idealProfits["KELP"]), ask_volume))
+        # fair_bid = -1
+        # for bid_amt in state.order_depths["KELP"].buy_orders:
+        #     if fair_bid == -1 or state.order_depths["KELP"].buy_orders[bid_amt] >= \
+        #             state.order_depths["KELP"].buy_orders[fair_bid]:
+        #         fair_bid = bid_amt
+
+        # fair_ask = -1
+        # for ask_amt in state.order_depths["KELP"].sell_orders:
+        #     if fair_ask == -1 or state.order_depths["KELP"].sell_orders[ask_amt] <= \
+        #             state.order_depths["KELP"].sell_orders[fair_ask]:
+        #         fair_ask = ask_amt
+
+
+        # if fair_bid == -1 or fair_ask == -1:
+        fair_price = self.mcginley_prices["KELP"]
+        # else:
+            # fair_price = (fair_bid + fair_ask) / 2
+
+        if self.lower_limit <= current_position <= self.upper_limit:
+            # Not long nor short
+            orders.append(Order("KELP", math.floor(fair_price - self.idealProfits["KELP"] / 2), bid_volume))
+            orders.append(Order("KELP", math.ceil(fair_price + self.idealProfits["KELP"] / 2), ask_volume))
+        
+        # if current_position > self.upper_limit:
+        #     # Long position
+        #     orders.append(Order("KELP", math.floor(self.mcginley_prices["KELP"] - self.idealProfits["KELP"]), bid_volume))
+        #     orders.append(Order("KELP", math.ceil(self.mcginley_prices["KELP"]), ask_volume))
+        #
+        # if current_position < self.lower_limit:
+        #     # Short position
+        #     orders.append(Order("KELP", math.floor(self.mcginley_prices["KELP"]), bid_volume))
+        #     orders.append(Order("KELP", math.ceil(self.mcginley_prices["KELP"] + self.idealProfits["KELP"]), ask_volume))
 
         return orders
     def kelp_trading_mcginley_risk_spread(self,state:TradingState):
@@ -331,7 +350,7 @@ class Trader:
 
         if current_position == 0:
             # Not long nor short
-            orders.append(Order("KELP", math.floor(self.mcginley_prices["KELP"] - self.idealProfits["KELP"] / 2 -self.spreads["KELP"]/2 ), bid_volume))
+            orders.append(Order("KELP", math.floor(self.mcginley_prices["KELP"] - self.idealProfits["KELP"] / 2 -self.spreads["KELP"]/2), bid_volume))
             orders.append(Order("KELP", math.ceil(self.mcginley_prices["KELP"] + self.idealProfits["KELP"] / 2 + self.spreads["KELP"]/2), ask_volume))
         
         if current_position > 0:
@@ -352,10 +371,6 @@ class Trader:
             current_position = state.position["KELP"]
         bid_volume = self.position_limit["KELP"] - current_position
         ask_volume = - self.position_limit["KELP"] - current_position
-
-        # -50 -14 -> 50 - (-14) = 64
-        # -50 14 -> 50 - 14 = 36
-        # 50 14,
 
         orders = []
 
@@ -417,26 +432,26 @@ class Trader:
         # print("Beginning of run")
         # print(self.position_limit)
         # Only method required. It takes all buy and sell orders for all symbols as an input, and outputs a list of orders to be sent
-        for product in self.products:
-            self.update_ema_prices(product, state)
-            self.update_mcginley(product, state)
-            self.update_spreads(product, state)
-        # print(self.mcginley_prices)
-        # print(self.mcginley_prices["KELP"])
-        logger.print(min(state.order_depths["KELP"].sell_orders) - max(state.order_depths["KELP"].buy_orders) + self.profit_target["KELP"])
-        logger.print(min(state.order_depths["RAINFOREST_RESIN"].sell_orders) - max(state.order_depths["RAINFOREST_RESIN"].buy_orders) + self.profit_target["RAINFOREST_RESIN"])
-        # print("Mid price of : ", self.get_price)
-        orders = {}
+        # for product in self.products:
+        #     self.update_ema_prices(product, state)
+        #     self.update_mcginley(product, state)
+        #     self.update_spreads(product, state)
+        # # print(self.mcginley_prices)
+        # # print(self.mcginley_prices["KELP"])
+        # logger.print(min(state.order_depths["KELP"].sell_orders) - max(state.order_depths["KELP"].buy_orders) + self.profit_target["KELP"])
+        # logger.print(min(state.order_depths["RAINFOREST_RESIN"].sell_orders) - max(state.order_depths["RAINFOREST_RESIN"].buy_orders) + self.profit_target["RAINFOREST_RESIN"])
+        # # print("Mid price of : ", self.get_price)
+        # orders = {}
+        #
+        # # orders["KELP"] = []
+        # # ords, pos = Strategy.arb(self, state, "KELP", self.get_price("KELP", state))
+        # # orders["KELP"].extend(ords)
+        #
+        # orders["KELP"] = self.kelp_trading_mcginley(state)
+        # # orders.extend(self.resin_trading(state    ))
+        # orders["RAINFOREST_RESIN"] = self.resin_trading(state)
+        #
+        # logger.flush(state, orders, 1, state.traderData)
 
-        # orders["KELP"] = []
-        # orders["KELP"].extend(Strategy.arb(self, state, "KELP", self.mcginley_prices["KELP"]))
-
-        orders["KELP"] = self.kelp_trading_ema(state)
-        # orders["KELP"].extend(self.pe(state, 0.1, 10))
-        # orders.extend(self.resin_trading(state))
-        orders["RAINFOREST_RESIN"] = self.resin_trading(state)
-
-        logger.flush(state, orders, 1, state.traderData)
-
-        return orders, 1, state.traderData
+        return [], 1, state.traderData
 

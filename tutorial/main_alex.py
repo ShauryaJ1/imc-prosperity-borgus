@@ -155,17 +155,17 @@ PARAMS = {
     },
     Product.SQUID_INK: {
         "take_width": 1,
-        "clear_width": 0,
+        "clear_width": 4,
         "prevent_adverse": True,
         "adverse_volume": 15,
-        "reversion_beta": -0.229,
+        "reversion_beta": 0.00,
         "disregard_edge": 1,
         "join_edge": 0,
         "default_edge": 1,
         "momentum_weight": 0.08,
         "history_window": 20,  #3 for momentum, #20 for ema
         "momentum_cutoff": 0.05,
-        "ema_param": 0.65,  #0.6 gives 4,882
+        "ema_param": 0.62,  #0.62 gives 5,513 with claerwidth = 4
         "fft_cutoff": 0.2
     },
 }

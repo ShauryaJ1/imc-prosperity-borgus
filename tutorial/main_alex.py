@@ -1,14 +1,11 @@
-from datamodel import OrderDepth, UserId, TradingState, Order
+from datamodel import OrderDepth, UserId, TradingState, Order, Symbol, Listing, Trade, Observation, ProsperityEncoder
 from typing import List
 import string
-import math
+import jsonpickle
 import numpy as np
-
-import json
+import math
 from typing import Any
-
-from datamodel import Listing, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
-
+from json import *
 
 class Logger:
     def __init__(self) -> None:
@@ -115,7 +112,7 @@ class Logger:
         return compressed
 
     def to_json(self, value: Any) -> str:
-        return json.dumps(value, cls=ProsperityEncoder, separators=(",", ":"))
+        return dumps(value, cls=ProsperityEncoder, separators=(",", ":"))
 
     def truncate(self, value: str, max_length: int) -> str:
         if len(value) <= max_length:
@@ -126,308 +123,588 @@ class Logger:
 
 logger = Logger()
 
-class Strategy:
-    @staticmethod
-    def compute_optimal_quotes(S_t, sigma, t, gamma, k, q):
-        # Time remaining
-        tau = 1 - t
-        # Inventory adjustment term (if any) can be added here if you track net inventory.
-        risk_term = (gamma * sigma ** 2 * tau) / 2
-        adjustment_term = (1 / gamma) * np.log(1 + gamma / k)
+class Product:
+    RAINFOREST_RESIN = "RAINFOREST_RESIN"
+    KELP = "KELP"
+    SQUID_INK = "SQUID_INK"
 
-        # Optimal price offsets
-        delta_bid = risk_term + adjustment_term
-        delta_ask = risk_term + adjustment_term  # symmetric if no inventory imbalance
 
-        logger.print(risk_term)
-        logger.print(adjustment_term)
-        logger.print(delta_bid + delta_ask)
-
-        R_t = S_t - (q * gamma * sigma ** 2) * tau
-
-        bid_price = R_t - delta_bid
-        ask_price = R_t + delta_ask
-        return bid_price, ask_price
+PARAMS = {
+    Product.RAINFOREST_RESIN: {
+        "fair_value": 10000,
+        "take_width": 1,
+        "clear_width": 0,
+        # for making
+        "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
+        "join_edge": 2,  # joins orders within this edge
+        "default_edge": 4,
+        "soft_position_limit": 35,
+    },
+    Product.KELP: {
+        "take_width": 1,
+        "clear_width": 0,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
+        "reversion_beta": -0.229,
+        "disregard_edge": 1,
+        "join_edge": 0,
+        "default_edge": 1,
+        "momentum_weight": 0.40,
+        "momentum_window": 3,
+        "momentum_cutoff": 0.1
+    },
+    Product.SQUID_INK: {
+        "take_width": 1,
+        "clear_width": 0,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
+        "reversion_beta": -0.229,
+        "disregard_edge": 1,
+        "join_edge": 0,
+        "default_edge": 1,
+        "momentum_weight": 0.08,
+        "momentum_window": 3,
+        "momentum_cutoff": 0.05
+    },
+}
 
 
 class Trader:
+    def __init__(self, params=None):
+        if params is None:
+            params = PARAMS
+        self.params = params
 
-    def __init__(self):
-        self.RISK = 0.14
-        self.PROFIT_TARGET = {"KELP": 2, "RAINFOREST_RESIN": 1}
-        self.POSITION_LIMIT = {
-            "KELP": 50,
-            "RAINFOREST_RESIN": 50
+        self.LIMIT = {Product.RAINFOREST_RESIN: 50, Product.KELP: 50, Product.SQUID_INK: 50}
+
+        self.trader_memory = {
+            "ink_price_history": [],
+            "kelp_price_history": []
         }
-        self.VOLUMES = {
-            "KELP": 5,
-            "RAINFOREST_RESIN": 10
-        }
-        self.DEFAULT_PRICES = {
-            "KELP": 2000,
-            "RAINFOREST_RESIN": 10000
-        }
-        self.PRODUCTS = [
-            "KELP",
-            "RAINFOREST_RESIN"
+
+    def take_best_orders(
+        self,
+        product: str,
+        fair_value: int,
+        take_width: float,
+        orders: List[Order],
+        order_depth: OrderDepth,
+        position: int,
+        buy_order_volume: int,
+        sell_order_volume: int,
+        prevent_adverse: bool = False,
+        adverse_volume: int = 0,
+    ) -> (int, int):
+        position_limit = self.LIMIT[product]
+
+        if len(order_depth.sell_orders) != 0:
+            best_ask = min(order_depth.sell_orders.keys())
+            best_ask_amount = -1 * order_depth.sell_orders[best_ask]
+
+            if not prevent_adverse or abs(best_ask_amount) <= adverse_volume:
+                # if the current best ask order isn't intentionally malicious (to topple us off of 0 ev)
+                # note: since prevent_adverse isn't on, we don't really care...
+                if best_ask <= fair_value - take_width:
+                    # best_ask <= 9999
+                    quantity = min(
+                        best_ask_amount, position_limit - position
+                    )  # max amt to buy
+                    if quantity > 0:
+                        orders.append(Order(product, best_ask, quantity))
+                        buy_order_volume += quantity
+                        order_depth.sell_orders[best_ask] += quantity
+                        if order_depth.sell_orders[best_ask] == 0:
+                            del order_depth.sell_orders[best_ask]
+
+        if len(order_depth.buy_orders) != 0:
+            best_bid = max(order_depth.buy_orders.keys())
+            best_bid_amount = order_depth.buy_orders[best_bid]
+
+            if not prevent_adverse or abs(best_bid_amount) <= adverse_volume:
+                # if the current best buy order isn't intentionally malicious (to topple us off of 0 ev)
+                # note: since prevent_adverse isn't on, we don't really care...
+                if best_bid >= fair_value + take_width:
+                    # best_bid >= 10001
+                    quantity = min(
+                        best_bid_amount, position_limit + position
+                    )  # should be the max we can sell
+                    if quantity > 0:
+                        orders.append(Order(product, best_bid, -1 * quantity))
+                        sell_order_volume += quantity
+                        order_depth.buy_orders[best_bid] -= quantity
+                        if order_depth.buy_orders[best_bid] == 0:
+                            del order_depth.buy_orders[best_bid]
+
+        return buy_order_volume, sell_order_volume
+
+    def market_make(
+        self,
+        product: str,
+        orders: List[Order],
+        bid: int,
+        ask: int,
+        position: int,
+        buy_order_volume: int,
+        sell_order_volume: int,
+    ) -> (int, int):
+        buy_quantity = self.LIMIT[product] - (position + buy_order_volume)
+        if buy_quantity > 0:
+            orders.append(Order(product, round(bid), buy_quantity))  # Buy order
+
+        sell_quantity = self.LIMIT[product] + (position - sell_order_volume)
+        if sell_quantity > 0:
+            orders.append(Order(product, round(ask), -sell_quantity))  # Sell order
+        return buy_order_volume, sell_order_volume
+
+    def clear_position_order(
+        self,
+        product: str,
+        fair_value: float,
+        width: int,
+        orders: List[Order],
+        order_depth: OrderDepth,
+        position: int,
+        buy_order_volume: int,
+        sell_order_volume: int,
+    ) -> List[Order]:
+        position_after_take = position + buy_order_volume - sell_order_volume
+        fair_for_bid = round(fair_value - width)
+        fair_for_ask = round(fair_value + width)
+
+        buy_quantity = self.LIMIT[product] - (position + buy_order_volume)
+        sell_quantity = self.LIMIT[product] + (position - sell_order_volume)
+
+        if position_after_take > 0:
+            # Aggregate volume from all buy orders with price greater than or equal to fair_for_ask
+            clear_quantity = sum(
+                volume
+                for price, volume in order_depth.buy_orders.items()
+                if price >= fair_for_ask
+            )
+            clear_quantity = min(clear_quantity, position_after_take)
+            sent_quantity = min(sell_quantity, clear_quantity)
+            if sent_quantity > 0:
+                orders.append(Order(product, fair_for_ask, -abs(sent_quantity)))
+                sell_order_volume += abs(sent_quantity)
+
+        if position_after_take < 0:
+            # Aggregate volume from all sell orders with price lower than fair_for_bid
+            clear_quantity = sum(
+                abs(volume)
+                for price, volume in order_depth.sell_orders.items()
+                if price <= fair_for_bid
+            )
+            clear_quantity = min(clear_quantity, abs(position_after_take))
+            sent_quantity = min(buy_quantity, clear_quantity)
+            if sent_quantity > 0:
+                orders.append(Order(product, fair_for_bid, abs(sent_quantity)))
+                buy_order_volume += abs(sent_quantity)
+
+        return buy_order_volume, sell_order_volume
+
+    def kelp_fair_value(self, order_depth: OrderDepth, traderObject) -> float:
+        if len(order_depth.sell_orders) != 0 and len(order_depth.buy_orders) != 0:
+            best_ask = min(order_depth.sell_orders.keys())
+            best_bid = max(order_depth.buy_orders.keys())
+            filtered_ask = [
+                price
+                for price in order_depth.sell_orders.keys()
+                if abs(order_depth.sell_orders[price])
+                >= self.params[Product.KELP]["adverse_volume"]
+            ]
+            filtered_bid = [
+                price
+                for price in order_depth.buy_orders.keys()
+                if abs(order_depth.buy_orders[price])
+                >= self.params[Product.KELP]["adverse_volume"]
+            ]
+            mm_ask = min(filtered_ask) if len(filtered_ask) > 0 else None
+            mm_bid = max(filtered_bid) if len(filtered_bid) > 0 else None
+            if mm_ask == None or mm_bid == None:
+                if traderObject.get("kelp_last_price", None) == None:
+                    mmmid_price = (best_ask + best_bid) / 2
+                else:
+                    mmmid_price = traderObject["kelp_last_price"]
+            else:
+                mmmid_price = (mm_ask + mm_bid) / 2
+
+            
+            
+            
+            #estimate with reversion
+            if traderObject.get("kelp_last_price", None) != None:
+                last_price = traderObject["kelp_last_price"]
+                last_returns = (mmmid_price - last_price) / last_price
+                pred_returns = (
+                    last_returns * self.params[Product.KELP]["reversion_beta"]
+                )
+                fair = mmmid_price + (mmmid_price * pred_returns)
+            else:
+                fair = mmmid_price
+
+            price_history: List[float] = self.trader_memory.get("kelp_price_history", [])
+            #adjust with momentum?
+            if len(price_history) >= 2:
+                # momentum = (price_history[-1] - price_history[0])
+
+                x = np.arange(len(price_history))    #for linreg, its literally better to have a negative momentum weight?
+                y = np.array(price_history)
+                slope, intercept = np.polyfit(x, y, 1)
+                y_pred = slope * x + intercept
+
+                ss_res = np.sum((y - y_pred) ** 2)
+                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+
+                momentum=0
+                if r_squared >= self.params[Product.KELP]["momentum_cutoff"]:        
+                    momentum = slope
+
+                fair += self.params[Product.KELP]["momentum_weight"] * momentum 
+
+            traderObject["kelp_last_price"] = fair
+
+            #update price_history
+            price_history.append(fair)
+
+            if len(price_history) > self.params[Product.KELP]["momentum_window"]:
+                price_history.pop(0)
+
+            self.trader_memory["kelp_price_history"] = price_history
+
+            return fair
+        return None
+
+    def ink_fair_value(self, order_depth: OrderDepth, traderObject) -> float:
+        if len(order_depth.sell_orders) != 0 and len(order_depth.buy_orders) != 0:
+            best_ask = min(order_depth.sell_orders.keys())
+            best_bid = max(order_depth.buy_orders.keys())
+            filtered_ask = [
+                price
+                for price in order_depth.sell_orders.keys()
+                if abs(order_depth.sell_orders[price])
+                   >= self.params[Product.SQUID_INK]["adverse_volume"]
+            ]
+            filtered_bid = [
+                price
+                for price in order_depth.buy_orders.keys()
+                if abs(order_depth.buy_orders[price])
+                   >= self.params[Product.SQUID_INK]["adverse_volume"]
+            ]
+            mm_ask = min(filtered_ask) if len(filtered_ask) > 0 else None
+            mm_bid = max(filtered_bid) if len(filtered_bid) > 0 else None
+            if mm_ask == None or mm_bid == None:
+                if traderObject.get("ink_last_price", None) == None:
+                    mmmid_price = (best_ask + best_bid) / 2
+                else:
+                    mmmid_price = traderObject["ink_last_price"]
+            else:
+                mmmid_price = (mm_ask + mm_bid) / 2
+
+            
+            
+
+            #estimate with reversion
+            
+            if traderObject.get("ink_last_price", None) != None:
+                last_price = traderObject["ink_last_price"]
+                last_returns = (mmmid_price - last_price) / last_price
+                pred_returns = (
+                        last_returns * self.params[Product.SQUID_INK]["reversion_beta"]
+                )
+                fair = mmmid_price + (mmmid_price * pred_returns)
+            else:
+                fair = mmmid_price
+
+            #adjust with momentum?
+            price_history: List[float] = self.trader_memory.get("ink_price_history", [])
+            if len(price_history) >= 2:
+                # momentum = (price_history[-1] - price_history[0])   #this gives like 3.77k somehow, ???
+                x = np.arange(len(price_history))
+                y = np.array(price_history)
+                slope, intercept = np.polyfit(x, y, 1)
+                y_pred = slope * x + intercept
+
+                ss_res = np.sum((y - y_pred) ** 2)
+                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+
+                momentum=0
+                if r_squared >= self.params[Product.SQUID_INK]["momentum_cutoff"]:
+                    momentum = slope
+
+                fair += self.params[Product.SQUID_INK]["momentum_weight"] * momentum 
+
+            #update price history
+            price_history.append(fair)
+
+            if len(price_history) > self.params[Product.SQUID_INK]["momentum_window"]:
+                price_history.pop(0)
+
+            self.trader_memory["ink_price_history"] = price_history
+
+            traderObject["ink_last_price"] = fair
+            return fair
+        return None
+
+    def take_orders(
+        self,
+        product: str,
+        order_depth: OrderDepth,
+        fair_value: float,
+        take_width: float,
+        position: int,
+        prevent_adverse: bool = False,
+        adverse_volume: int = 0,
+    ) -> (List[Order], int, int):
+        orders: List[Order] = []
+        buy_order_volume = 0
+        sell_order_volume = 0
+
+        buy_order_volume, sell_order_volume = self.take_best_orders(
+            product,
+            fair_value,
+            take_width,
+            orders,
+            order_depth,
+            position,
+            buy_order_volume,
+            sell_order_volume,
+            prevent_adverse,
+            adverse_volume,
+        )
+        return orders, buy_order_volume, sell_order_volume
+
+    def clear_orders(
+        self,
+        product: str,
+        order_depth: OrderDepth,
+        fair_value: float,
+        clear_width: int,
+        position: int,
+        buy_order_volume: int,
+        sell_order_volume: int,
+    ) -> (List[Order], int, int):
+        orders: List[Order] = []
+        buy_order_volume, sell_order_volume = self.clear_position_order(
+            product,
+            fair_value,
+            clear_width,
+            orders,
+            order_depth,
+            position,
+            buy_order_volume,
+            sell_order_volume,
+        )
+        return orders, buy_order_volume, sell_order_volume
+
+    def make_orders(
+        self,
+        product,
+        order_depth: OrderDepth,
+        fair_value: float,
+        position: int,
+        buy_order_volume: int,
+        sell_order_volume: int,
+        disregard_edge: float,  # disregard trades within this edge for pennying or joining
+        join_edge: float,  # join trades within this edge
+        default_edge: float,  # default edge to request if there are no levels to penny or join
+        manage_position: bool = False,
+        soft_position_limit: int = 0,
+        # will penny all other levels with higher edge
+    ):
+        orders: List[Order] = []
+        asks_above_fair = [
+            price
+            for price in order_depth.sell_orders.keys()
+            if price > fair_value + disregard_edge
         ]
-        self.PAST_PRICES = {
-            product: [] for product in self.PRODUCTS
-        }
+        bids_below_fair = [
+            price
+            for price in order_depth.buy_orders.keys()
+            if price < fair_value - disregard_edge
+        ]
 
-        self.MCGINLEY_PRICES = {
-            product: None for product in self.PRODUCTS
-        }
-        # self.spreads = {
-        #     product:0 for product in self.products
-        # }
-        self.SPREADS = {
-            "KELP": 4,
-            "RAINFOREST_RESIN": 7
-        }
-        self.IDEAL_PROFITS = {
-            "KELP": 2,
-            "RAINFOREST_RESIN": 4
-        }
+        best_ask_above_fair = min(asks_above_fair) if len(asks_above_fair) > 0 else None
+        best_bid_below_fair = max(bids_below_fair) if len(bids_below_fair) > 0 else None
 
-        self.MCGINLEY_PERIOD = 8
+        ask = round(fair_value + default_edge)
+        if best_ask_above_fair != None:
+            if abs(best_ask_above_fair - fair_value) <= join_edge:
+                ask = best_ask_above_fair  # join
+            else:
+                ask = best_ask_above_fair - 1  # penny
 
-        self.AVELLANADA_PARAMS = {
-            "gamma": 1,  # Risk aversion parameter (example)
-            "A": 1.0,  # Baseline arrival rate (example value)
-            "k": 1.0,  # Sensitivity of arrival rate (example value)
-            "nu": 0
-        }
+        bid = round(fair_value - default_edge)
+        if best_bid_below_fair != None:
+            if abs(fair_value - best_bid_below_fair) <= join_edge:
+                bid = best_bid_below_fair
+            else:
+                bid = best_bid_below_fair + 1
 
-        self.MARKET_ORDERS = {
-            product: [] for product in self.PRODUCTS
-        }
+        if manage_position:
+            if position > soft_position_limit:
+                ask -= 1
+            elif position < -1 * soft_position_limit:
+                bid += 1
 
-    def get_price(self, symbol, state: TradingState):
-        return (max(state.order_depths[symbol].buy_orders) + min(state.order_depths[symbol].sell_orders)) / 2
+        buy_order_volume, sell_order_volume = self.market_make(
+            product,
+            orders,
+            bid,
+            ask,
+            position,
+            buy_order_volume,
+            sell_order_volume,
+        )
 
-    def update_spreads(self, state):
-        for symbol in self.PRODUCTS:
-            self.SPREADS[symbol] = min(state.order_depths[symbol].sell_orders) - max(
-                state.order_depths[symbol].buy_orders)
-
-    def update_market_orders(self, state):
-        for symbol in self.PRODUCTS:
-            current_price = self.get_price(symbol, state)
-            dct = dict()
-            actual_market = state.market_trades[symbol] if symbol in state.market_trades else []
-            actual_own = state.own_trades[symbol] if symbol in state.own_trades else []
-            for trade in actual_market + actual_own:
-                if abs(trade.price - current_price) not in dct:
-                    dct[abs(trade.price - current_price)] = 0
-                dct[abs(trade.price - current_price)] += trade.quantity
-            self.MARKET_ORDERS[symbol].append(dct)
-
-    def update_k(self, symbol, state):
-        master_dct = dict()
-        for dct in self.MARKET_ORDERS[symbol][max(0, len(self.MARKET_ORDERS[symbol]) - 100) : ]:
-            for price in dct:
-                if price not in master_dct:
-                    master_dct[price] = 0
-                master_dct[price] += dct[price]
-        #run exponential regression
-        x = np.array(list(master_dct.keys()))
-        y = np.array(list(master_dct.values()))
-
-        if len(x) == 0:
-            self.AVELLANADA_PARAMS["k"] = 1
-            return
-
-        log_y = np.log(y)
-        slope, intercept = np.polyfit(x, log_y, 1)
-        # if state.timestamp == 100000:
-        #     raise Exception(f"{slope}")
-        logger.print(slope)
-        if slope > 0:
-            self.AVELLANADA_PARAMS["k"] = 0.1
-            return
-        self.AVELLANADA_PARAMS["k"] = -slope
-
-    def update_prices(self, state):
-        if state.timestamp % 1 == 0:
-            for symbol in self.PRODUCTS:
-                self.PAST_PRICES[symbol].append(self.get_price(symbol, state))
-
-    def update_mcginley(self, symbol, state):
-        mid_price = self.get_price(symbol, state)
-        if self.MCGINLEY_PRICES[symbol] is None:
-            self.MCGINLEY_PRICES[symbol] = mid_price
-        else:
-            self.MCGINLEY_PRICES[symbol] = self.MCGINLEY_PRICES[symbol] + (mid_price - self.MCGINLEY_PRICES[symbol]) / (
-                    0.6 * self.MCGINLEY_PERIOD * (mid_price / self.MCGINLEY_PRICES[symbol]) ** 4)
-
-    def resin_trading(self, state: TradingState):
-        if "RAINFOREST_RESIN" not in state.position:
-            current_position = 0
-        else:
-            current_position = state.position["RAINFOREST_RESIN"]
-        bid_volume = self.POSITION_LIMIT["RAINFOREST_RESIN"] - current_position
-        ask_volume = - self.POSITION_LIMIT["RAINFOREST_RESIN"] - current_position
-
-        orders = []
-        orders.append(Order("RAINFOREST_RESIN", math.floor(
-            self.DEFAULT_PRICES["RAINFOREST_RESIN"] - self.IDEAL_PROFITS["RAINFOREST_RESIN"] / 2), bid_volume))
-        orders.append(Order("RAINFOREST_RESIN", math.ceil(
-            self.DEFAULT_PRICES["RAINFOREST_RESIN"] + self.IDEAL_PROFITS["RAINFOREST_RESIN"] / 2), ask_volume))
-        return orders
-
-    def resin_risk_spread(self, state: TradingState):
-        if "RAINFOREST_RESIN" not in state.position:
-            current_position = 0
-        else:
-            current_position = state.position["RAINFOREST_RESIN"]
-        bid_volume = self.POSITION_LIMIT["RAINFOREST_RESIN"] - current_position
-        ask_volume = - self.POSITION_LIMIT["RAINFOREST_RESIN"] - current_position
-        # bid_volume = self.volumes["RAINFOREST_RESIN"]
-        # ask_volume = self.volumes["RAINFOREST_RESIN"]
-        orders = []
-        orders.append(Order("RAINFOREST_RESIN", math.floor(
-            self.DEFAULT_PRICES["RAINFOREST_RESIN"] - self.IDEAL_PROFITS["RAINFOREST_RESIN"] / 2 - self.SPREADS[
-                "RAINFOREST_RESIN"] / 2), bid_volume))
-        orders.append(Order("RAINFOREST_RESIN", math.ceil(
-            self.DEFAULT_PRICES["RAINFOREST_RESIN"] + self.IDEAL_PROFITS["RAINFOREST_RESIN"] / 2 + self.SPREADS[
-                "RAINFOREST_RESIN"] / 2), ask_volume))
-        return orders
-
-    def kelp_trading_mcginley_risk_spread(self, state: TradingState):
-        if "KELP" not in state.position:
-            current_position = 0
-        else:
-            current_position = state.position["KELP"]
-        bid_volume = self.POSITION_LIMIT["KELP"] - current_position
-        ask_volume = - self.POSITION_LIMIT["KELP"] - current_position
-        # bid_volume = self.volumes["KELP"]
-        # ask_volume = self.volumes["KELP"]
-        orders = []
-
-        if current_position == 0:
-            # Not long nor short
-            orders.append(Order("KELP", math.floor(
-                self.MCGINLEY_PRICES["KELP"] - self.IDEAL_PROFITS["KELP"] / 2 - self.SPREADS["KELP"] / 2), bid_volume))
-            orders.append(Order("KELP", math.ceil(
-                self.MCGINLEY_PRICES["KELP"] + self.IDEAL_PROFITS["KELP"] / 2 + self.SPREADS["KELP"] / 2), ask_volume))
-
-        if current_position > 0:
-            # Long position
-            orders.append(Order("KELP", math.floor(
-                self.MCGINLEY_PRICES["KELP"] - self.IDEAL_PROFITS["KELP"] - current_position * self.RISK - self.SPREADS[
-                    "KELP"] / 2), bid_volume))
-            orders.append(Order("KELP", math.ceil(
-                self.MCGINLEY_PRICES["KELP"] + -current_position * self.RISK + self.SPREADS["KELP"] / 2), ask_volume))
-
-        if current_position < 0:
-            # Short position
-            orders.append(Order("KELP", math.floor(
-                self.MCGINLEY_PRICES["KELP"] - current_position * self.RISK - self.SPREADS["KELP"] / 2), bid_volume))
-            orders.append(Order("KELP", math.ceil(
-                self.MCGINLEY_PRICES["KELP"] + self.IDEAL_PROFITS["KELP"] - current_position * self.RISK + self.SPREADS[
-                    "KELP"] / 2), ask_volume))
-
-        return orders
-
-    def kelp_trading_avellaneda_stoikov(self, symbol, state: TradingState):
-        current_position = state.position[symbol] if symbol in state.position else 0
-        S_t = self.PAST_PRICES[symbol][-1]
-        sigma = np.std(np.array(   [math.log(self.PAST_PRICES[symbol][i] / self.PAST_PRICES[symbol][i-1]) for i in range(max(1, len(self.PAST_PRICES[symbol]) - 100), len(self.PAST_PRICES[symbol]) )]))
-        sigma_scaled = sigma * 2000 ** 0.5
-        t = state.timestamp / 200000
-        best_bid, best_ask = Strategy.compute_optimal_quotes(S_t, sigma_scaled, t, self.AVELLANADA_PARAMS["gamma"], self.AVELLANADA_PARAMS["k"], current_position)
-        # best_bid += self.AVELLANADA_PARAMS["nu"] * (state.position[symbol] if symbol in state.position else 0)
-        # best_ask -= self.AVELLANADA_PARAMS["nu"] * (state.position[symbol] if symbol in state.position else 0)
-
-        try:
-            bid_volume = self.POSITION_LIMIT[symbol] - state.position[symbol]
-            ask_volume = - self.POSITION_LIMIT[symbol] - state.position[symbol]
-        except:
-            bid_volume = self.POSITION_LIMIT[symbol]
-            ask_volume = - self.POSITION_LIMIT[symbol]
-
-        orders = []
-        orders.append(Order(symbol, math.floor(best_bid), bid_volume))
-        orders.append(Order(symbol, math.ceil(best_ask), ask_volume))
-        return orders
-
-    def kelp_trading_borgus_moment(self, state: TradingState):
-        fair_bid = -1
-        for bid_amt in state.order_depths["KELP"].buy_orders:
-            if fair_bid == -1 or state.order_depths["KELP"].buy_orders[bid_amt] >= state.order_depths["KELP"].buy_orders[fair_bid]:
-                fair_bid = bid_amt
-
-        fair_ask = -1
-        for ask_amt in state.order_depths["KELP"].sell_orders:
-            if fair_ask == -1 or state.order_depths["KELP"].sell_orders[ask_amt] <= state.order_depths["KELP"].sell_orders[fair_ask]:
-                fair_ask = ask_amt
-
-        if fair_bid == -1 or fair_ask == -1:
-            raise Exception(f"{state.order_depths['KELP'].buy_orders} {state.order_depths['KELP'].sell_orders}")
-
-        if "KELP" not in state.position:
-            current_position = 0
-        else:
-            current_position = state.position["KELP"]
-        bid_volume = self.POSITION_LIMIT["KELP"] - current_position
-        ask_volume = - self.POSITION_LIMIT["KELP"] - current_position
-        # bid_volume = self.volumes["KELP"]
-        # ask_volume = self.volumes["KELP"]
-        orders = []
-
-        fair_price = (fair_bid + fair_ask) / 2
-
-        if -10 < current_position and current_position < 10:
-            # Not long nor short
-            orders.append(Order("KELP", math.floor(
-                 fair_price - self.IDEAL_PROFITS["KELP"] / 2), bid_volume))
-            orders.append(Order("KELP", math.ceil(
-                 fair_price + self.IDEAL_PROFITS["KELP"] / 2), ask_volume))
-
-
-        elif current_position > 0:
-            # Long position
-            orders.append(Order("KELP", math.floor(
-                fair_price - self.IDEAL_PROFITS["KELP"]), bid_volume))
-            orders.append(Order("KELP", math.ceil(
-                fair_ask), ask_volume))
-
-        elif current_position < 0:
-            # Short position
-            orders.append(Order("KELP", math.floor(
-                fair_bid), bid_volume))
-            orders.append(Order("KELP", math.ceil(
-                fair_price + self.IDEAL_PROFITS["KELP"]), ask_volume))
-
-        return orders
-
-
+        return orders, buy_order_volume, sell_order_volume
 
     def run(self, state: TradingState):
-        # print("Beginning of run")
-        # print(self.position_limit)
-        # Only method required. It takes all buy and sell orders for all symbols as an input, and outputs a list of orders to be sent
-        for product in self.PRODUCTS:
-            self.update_mcginley(product, state)
-            self.update_spreads(state)
-            self.update_prices(state)
-            self.update_market_orders(state)
-            self.update_k("KELP", state)
+        traderObject = {}
+        if state.traderData != None and state.traderData != "":
+            traderObject = jsonpickle.decode(state.traderData)
 
-        # print("Mid price of : ", self.get_price)
-        orders = {}
+        result = {}
 
+        if Product.RAINFOREST_RESIN in self.params and Product.RAINFOREST_RESIN in state.order_depths:
+            resin_position = (
+                state.position[Product.RAINFOREST_RESIN]
+                if Product.RAINFOREST_RESIN in state.position
+                else 0
+            )
+            resin_take_orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.RAINFOREST_RESIN,
+                    state.order_depths[Product.RAINFOREST_RESIN],
+                    self.params[Product.RAINFOREST_RESIN]["fair_value"],
+                    self.params[Product.RAINFOREST_RESIN]["take_width"],
+                    resin_position,
+                )
+            )
+            resin_clear_orders, buy_order_volume, sell_order_volume = (
+                self.clear_orders(
+                    Product.RAINFOREST_RESIN,
+                    state.order_depths[Product.RAINFOREST_RESIN],
+                    self.params[Product.RAINFOREST_RESIN]["fair_value"],
+                    self.params[Product.RAINFOREST_RESIN]["clear_width"],
+                    resin_position,
+                    buy_order_volume,
+                    sell_order_volume,
+                )
+            )
+            resin_make_orders, _, _ = self.make_orders(
+                Product.RAINFOREST_RESIN,
+                state.order_depths[Product.RAINFOREST_RESIN],
+                self.params[Product.RAINFOREST_RESIN]["fair_value"],
+                resin_position,
+                buy_order_volume,
+                sell_order_volume,
+                self.params[Product.RAINFOREST_RESIN]["disregard_edge"],
+                self.params[Product.RAINFOREST_RESIN]["join_edge"],
+                self.params[Product.RAINFOREST_RESIN]["default_edge"],
+                True,
+                self.params[Product.RAINFOREST_RESIN]["soft_position_limit"],
+            )
+            result[Product.RAINFOREST_RESIN] = (
+                resin_take_orders + resin_clear_orders + resin_make_orders
+            )
 
-        # orders["KELP"] = []
-        # ords, pos = Strategy.arb(self, state, "KELP", self.get_price("KELP", state))
-        # orders["KELP"].extend(ords)
+        if Product.KELP in self.params and Product.KELP in state.order_depths:
+            kelp_position = (
+                state.position[Product.KELP]
+                if Product.KELP in state.position
+                else 0
+            )
+            kelp_fair_value = self.kelp_fair_value(
+                state.order_depths[Product.KELP], traderObject
+            )
+            kelp_take_orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.KELP,
+                    state.order_depths[Product.KELP],
+                    kelp_fair_value,
+                    self.params[Product.KELP]["take_width"],
+                    kelp_position,
+                    self.params[Product.KELP]["prevent_adverse"],
+                    self.params[Product.KELP]["adverse_volume"],
+                )
+            )
+            kelp_clear_orders, buy_order_volume, sell_order_volume = (
+                self.clear_orders(
+                    Product.KELP,
+                    state.order_depths[Product.KELP],
+                    kelp_fair_value,
+                    self.params[Product.KELP]["clear_width"],
+                    kelp_position,
+                    buy_order_volume,
+                    sell_order_volume,
+                )
+            )
+            kelp_make_orders, _, _ = self.make_orders(
+                Product.KELP,
+                state.order_depths[Product.KELP],
+                kelp_fair_value,
+                kelp_position,
+                buy_order_volume,
+                sell_order_volume,
+                self.params[Product.KELP]["disregard_edge"],
+                self.params[Product.KELP]["join_edge"],
+                self.params[Product.KELP]["default_edge"],
+            )
+            result[Product.KELP] = (
+                kelp_take_orders + kelp_clear_orders + kelp_make_orders
+            )
 
-        orders["KELP"] = self.kelp_trading_avellaneda_stoikov("KELP", state)
-        # orders.extend(self.resin_trading(state    ))
-        orders["RAINFOREST_RESIN"] = self.resin_trading(state)
+        if Product.SQUID_INK in self.params and Product.SQUID_INK in state.order_depths:
+            ink_position = (
+                state.position[Product.SQUID_INK]
+                if Product.SQUID_INK in state.position
+                else 0
+            )
+            ink_fair_value = self.ink_fair_value(
+                state.order_depths[Product.SQUID_INK], traderObject
+            )
+            ink_take_orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.SQUID_INK,
+                    state.order_depths[Product.SQUID_INK],
+                    ink_fair_value,
+                    self.params[Product.SQUID_INK]["take_width"],
+                    ink_position,
+                    self.params[Product.SQUID_INK]["prevent_adverse"],
+                    self.params[Product.SQUID_INK]["adverse_volume"],
+                )
+            )
+            ink_clear_orders, buy_order_volume, sell_order_volume = (
+                self.clear_orders(
+                    Product.SQUID_INK,
+                    state.order_depths[Product.SQUID_INK],
+                    ink_fair_value,
+                    self.params[Product.SQUID_INK]["clear_width"],
+                    ink_position,
+                    buy_order_volume,
+                    sell_order_volume,
+                )
+            )
+            ink_make_orders, _, _ = self.make_orders(
+                Product.SQUID_INK,
+                state.order_depths[Product.SQUID_INK],
+                ink_fair_value,
+                ink_position,
+                buy_order_volume,
+                sell_order_volume,
+                self.params[Product.SQUID_INK]["disregard_edge"],
+                self.params[Product.SQUID_INK]["join_edge"],
+                self.params[Product.SQUID_INK]["default_edge"],
+            )
+            result[Product.SQUID_INK] = (
+                    ink_take_orders + ink_clear_orders + ink_make_orders
+            )
 
-        logger.flush(state, orders, 1, state.traderData)
+        conversions = 1
+        traderData = jsonpickle.encode(traderObject)
 
-        return orders, 1, state.traderData
+        logger.flush(state, result, 1, state.traderData)
 
+        return result, conversions, traderData

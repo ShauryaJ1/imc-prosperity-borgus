@@ -150,7 +150,7 @@ PARAMS = {
         "join_edge": 0,
         "default_edge": 1,
         "momentum_weight": 0.40,
-        "momentum_window": 3,
+        "history_window": 3,
         "momentum_cutoff": 0.1
     },
     Product.SQUID_INK: {
@@ -163,8 +163,10 @@ PARAMS = {
         "join_edge": 0,
         "default_edge": 1,
         "momentum_weight": 0.08,
-        "momentum_window": 3,
-        "momentum_cutoff": 0.05
+        "history_window": 30,  #3 for momentum, trying EMA rn
+        "momentum_cutoff": 0.05,
+        "ema_param": 0.3,  #0.3 gives 3,824
+        "fft_cutoff": 0.2
     },
 }
 
@@ -179,7 +181,8 @@ class Trader:
 
         self.trader_memory = {
             "ink_price_history": [],
-            "kelp_price_history": []
+            "kelp_price_history": [],
+            "volitality_arr": []
         }
 
     def take_best_orders(
@@ -209,6 +212,7 @@ class Trader:
                     quantity = min(
                         best_ask_amount, position_limit - position
                     )  # max amt to buy
+                    
                     if quantity > 0:
                         orders.append(Order(product, best_ask, quantity))
                         buy_order_volume += quantity
@@ -367,7 +371,7 @@ class Trader:
             #update price_history
             price_history.append(fair)
 
-            if len(price_history) > self.params[Product.KELP]["momentum_window"]:
+            if len(price_history) > self.params[Product.KELP]["history_window"]:
                 price_history.pop(0)
 
             self.trader_memory["kelp_price_history"] = price_history
@@ -375,7 +379,7 @@ class Trader:
             return fair
         return None
 
-    def ink_fair_value(self, order_depth: OrderDepth, traderObject) -> float:
+    def ink_fair_value(self, order_depth: OrderDepth, traderObject, timestamp) -> float:
         if len(order_depth.sell_orders) != 0 and len(order_depth.buy_orders) != 0:
             best_ask = min(order_depth.sell_orders.keys())
             best_bid = max(order_depth.buy_orders.keys())
@@ -418,32 +422,56 @@ class Trader:
 
             #adjust with momentum?
             price_history: List[float] = self.trader_memory.get("ink_price_history", [])
-            if len(price_history) >= 2:
+
+            volitality_array: List[float] = self.trader_memory.get("volitality_arr", [])
+
+
+            if len(price_history) >= self.params[Product.SQUID_INK]["history_window"]:
                 # momentum = (price_history[-1] - price_history[0])   #this gives like 3.77k somehow, ???
-                x = np.arange(len(price_history))
-                y = np.array(price_history)
-                slope, intercept = np.polyfit(x, y, 1)
-                y_pred = slope * x + intercept
+            
+                # x = np.arange(len(price_history))
+                # y = np.array(price_history)
+                # slope, intercept = np.polyfit(x, y, 1)
+                # y_pred = slope * x + intercept
 
-                ss_res = np.sum((y - y_pred) ** 2)
-                ss_tot = np.sum((y - np.mean(y)) ** 2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                # ss_res = np.sum((y - y_pred) ** 2)
+                # ss_tot = np.sum((y - np.mean(y)) ** 2)
+                # r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
 
-                momentum=0
-                if r_squared >= self.params[Product.SQUID_INK]["momentum_cutoff"]:
-                    momentum = slope
+                # momentum=0
+                # if r_squared >= self.params[Product.SQUID_INK]["momentum_cutoff"]:
+                #     momentum = slope
 
-                fair += self.params[Product.SQUID_INK]["momentum_weight"] * momentum 
+                # fair += self.params[Product.SQUID_INK]["momentum_weight"] * momentum 
+
+                #   #trying EMA
+                beta = self.params[Product.SQUID_INK]["ema_param"]
+                
+                exponential_weighted_avg = (1 - beta)/(1 - beta**len(price_history)) * (sum(beta**i * price_history[i] for i in range(len(price_history))))
+                fair = exponential_weighted_avg
+
+
+                volitality_array.append(np.std(price_history))
+
+
 
             #update price history
             price_history.append(fair)
 
-            if len(price_history) > self.params[Product.SQUID_INK]["momentum_window"]:
+            if len(price_history) > self.params[Product.SQUID_INK]["history_window"]:
                 price_history.pop(0)
 
             self.trader_memory["ink_price_history"] = price_history
+            self.trader_memory["volitality_arr"] = volitality_array
 
-            traderObject["ink_last_price"] = fair
+            # if timestamp == 158000:
+            #     import plotly.graph_objects as go
+            #     fig = go.Figure(data=go.Scatter(x=[2000 + i * 100 for i in range(0, 9981)], y=volitality_array, mode='lines+markers'))
+            #     fig.write_image("plot.png")
+
+
+
+            traderObject["ink_last_price"] = mmmid_price
             return fair
         return None
 
@@ -663,7 +691,7 @@ class Trader:
                 else 0
             )
             ink_fair_value = self.ink_fair_value(
-                state.order_depths[Product.SQUID_INK], traderObject
+                state.order_depths[Product.SQUID_INK], traderObject, state.timestamp
             )
             ink_take_orders, buy_order_volume, sell_order_volume = (
                 self.take_orders(

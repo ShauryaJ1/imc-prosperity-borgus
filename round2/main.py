@@ -187,7 +187,7 @@ PARAMS = {
         "default_spread_mean": 48.762433333333334,
         "default_spread_std": 85.1180321401536,
         "spread_std_window": 45,
-        "zscore_threshold": 7,
+        "zscore_threshold": 2,
         "target_position": 60,
     }
 }

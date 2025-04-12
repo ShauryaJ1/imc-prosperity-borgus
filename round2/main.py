@@ -184,11 +184,11 @@ PARAMS = {
         "entry_price": -1,  # empty right now, set it to whatever mmmid we entered at
     },
     Product.SPREAD: {
-        "default_spread_mean": 379.50439988484239,
-        "default_spread_std": 76.07966,
+        "default_spread_mean": 48.762433333333334,
+        "default_spread_std": 85.1180321401536,
         "spread_std_window": 45,
         "zscore_threshold": 7,
-        "target_position": 58,
+        "target_position": 60,
     }
 }
 
@@ -197,8 +197,6 @@ BASKET_WEIGHTS = {
     Product.JAMS: 3,
     Product.DJEMBES: 1
 }
-
-
 
 
 class Trader:
@@ -441,8 +439,6 @@ class Trader:
             else:
                 mmmid_price = (mm_ask + mm_bid) / 2
 
-            # estimate with reversion
-
             if traderObject.get("ink_last_price", None) != None:
                 last_price = traderObject["ink_last_price"]
                 last_returns = (mmmid_price - last_price) / last_price
@@ -462,8 +458,23 @@ class Trader:
 
             mean = 1960
 
+            window = self.params[Product.SQUID_INK]["history_window"]
             if len(price_history) >= self.params[Product.SQUID_INK]["history_window"]:
                 # momentum = (price_history[-1] - price_history[0])   #this gives like 3.77k somehow, ???
+
+                x = np.arange(window)
+                y = np.array(price_history[-window:])
+
+                slope, intercept = np.polyfit(x, y, 1)
+
+                # subtract by the line to have mean 0 over the past stuffs
+                working_prices = price_history[-window:]
+                working_prices = [working_prices[i] + i * slope for i in range(window)]
+                tempmean = np.mean(working_prices)
+
+                # working_prices = [i - tempmean for i in working_prices]
+
+                curr_thing = mmmid_price - slope * window
 
                 # x = np.arange(len(price_history))
                 # y = np.array(price_history)
@@ -490,8 +501,8 @@ class Trader:
                 # short_ema = (1 - beta)
                 fair = exponential_weighted_avg
 
-                volitality_array.append(np.std(price_history[-1:-21:-1]))
-                z_score_array.append((mmmid_price - mean) / np.std(price_history[-1:-21:-1]))
+                volitality_array.append(np.std(price_history[-1:-1 - window:-1]))
+                z_score_array.append((curr_thing - np.mean(working_prices)) / np.std(working_prices))
 
             # update price history
             price_history.append(mmmid_price)
@@ -499,6 +510,12 @@ class Trader:
             self.trader_memory["ink_price_history"] = price_history
             self.trader_memory["volitality_arr"] = volitality_array
             self.trader_memory["z_score_arr"] = z_score_array
+
+            # if timestamp == 958000:
+            #     import plotly.graph_objects as go
+            #     fig = go.Figure(
+            #         data=go.Scatter(x=[2000 + i * 100 for i in range(0, 9981)], y=z_score_array, mode='lines+markers'))
+            #     fig.write_image("plot.png")
 
             traderObject["ink_last_price"] = mmmid_price
             return mmmid_price
@@ -571,6 +588,17 @@ class Trader:
             # will penny all other levels with higher edge
     ):
 
+        # slope = 0
+        # if product == Product.SQUID_INK:
+        #     price_history: List[float] = self.trader_memory.get("ink_price_history", [])
+        #     x = np.arange(len(price_history))
+        #     y = np.array(price_history)
+        #     slope, intercept = np.polyfit(x, y, 1)
+        price_history: List[float] = self.trader_memory.get("ink_price_history", [])
+
+        ink_stop_loss_percent = 0.005  # 0.5%
+        ink_stop_loss = 10
+
         orders: List[Order] = []
         asks_above_fair = [
             price
@@ -606,6 +634,57 @@ class Trader:
             elif position < -1 * soft_position_limit:
                 bid += 1
 
+        if -10 < position < 10:
+            self.params[Product.SQUID_INK]["entry_price"] = fair_value
+
+        z_score_array = self.trader_memory["z_score_arr"]
+
+        if product == Product.SQUID_INK and len(price_history) >= self.params[Product.SQUID_INK]["history_window"]:
+            beta = self.params[Product.SQUID_INK]["ema_param"]
+
+            long_ema = (1 - beta) / (1 - beta ** (self.params[Product.SQUID_INK]["history_window"] + 1)) * (
+                        fair_value + sum(beta ** (i + 1) * price_history[-i - 1] for i in
+                                         range(self.params[Product.SQUID_INK]["history_window"])))
+            short_ema = (1 - beta) / (1 - beta ** (self.params[Product.SQUID_INK]["small_window"] + 1)) * (
+                        fair_value + sum(beta ** (i + 1) * price_history[-i - 1] for i in
+                                         range(self.params[Product.SQUID_INK]["small_window"])))
+
+            if short_ema > long_ema:
+                logger.logs += f"going up!\b"
+            else:
+                logger.logs += f"going down!\n"
+            logger.logs += f"position: {position}\n"
+            logger.logs += f"short_ema = {short_ema}\n long_ema = {long_ema}\n"
+
+            # want difference of at least xxx to be significant, buy to 50 if significant, else just buy to 0
+            # if short_ema > long_ema + 0.002 and position < 0: #change to 0 if its autistic
+            if z_score_array and z_score_array[-1] < -4:
+                # its goin up!
+                # go on a long position, buy buy buy
+                bid = round(fair_value)
+                if best_ask_above_fair != None: ask = best_ask_above_fair + 3  # just put this super high in case anyone wants to buy for this ig
+                logger.logs += f"short_ema > long_ema\nPosition: {position}\nBid:{bid}\nAsk:{ask}"
+
+                bid = fair_value
+            # elif short_ema < long_ema - 0.002 and position>0:
+            elif z_score_array and z_score_array[-1] > 4:
+                # its goin down!
+                # go on a short position, sell sell sell
+                if best_bid_below_fair != None: bid = best_bid_below_fair - 3  # just put this super high in case someone wants to sell for this lmao
+                ask = round(fair_value)
+                logger.logs += f"short_ema < long_ema\nPosition: {position}\nBid:{bid}\nAsk:{ask}"
+
+            if position < 0 and fair_value < self.params[Product.SQUID_INK]["entry_price"] - ink_stop_loss and \
+                    self.params[Product.SQUID_INK]["entry_price"] != -1:
+                # close the long position, too risky
+                # want to buy back to 0
+                if best_ask_above_fair != None: bid = round(fair_value)  # just get back to 0
+                if best_ask_above_fair != None: ask = best_ask_above_fair + 3
+            if position > 0 and fair_value > self.params[Product.SQUID_INK]["entry_price"] + ink_stop_loss and \
+                    self.params[Product.SQUID_INK]["entry_price"] != -1:
+                # close the short position, too risky
+                if best_bid_below_fair != None: bid = best_bid_below_fair - 3
+                if best_bid_below_fair != None: ask = round(fair_value)  # just get back to 0
 
         buy_order_volume, sell_order_volume = self.market_make(
             product,
@@ -618,7 +697,6 @@ class Trader:
         )
 
         return orders, buy_order_volume, sell_order_volume
-
 
     def resin_strategy(self, state: TradingState, traderObject):
         if Product.RAINFOREST_RESIN in self.params and Product.RAINFOREST_RESIN in state.order_depths:
@@ -1004,7 +1082,7 @@ class Trader:
             spread_data: Dict[str, Any],
     ):
         if Product.PICNIC_BASKET1 not in order_depths.keys():
-            return None
+            return {}
 
         basket_order_depth = order_depths[Product.PICNIC_BASKET1]
         synthetic_order_depth = self.get_synthetic_basket_order_depth(order_depths)
@@ -1017,7 +1095,7 @@ class Trader:
                 len(spread_data["spread_history"])
                 < self.params[Product.SPREAD]["spread_std_window"]
         ):
-            return None
+            return {}
         elif len(spread_data["spread_history"]) > self.params[Product.SPREAD]["spread_std_window"]:
             spread_data["spread_history"].pop(0)
 
@@ -1044,7 +1122,7 @@ class Trader:
                 )
 
         spread_data["prev_zscore"] = zscore
-        return None
+        return {}
 
     def spread_strategy(self, state: TradingState, traderObject):
         if Product.SPREAD not in traderObject:
@@ -1077,7 +1155,8 @@ class Trader:
         result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
         result[Product.KELP] = self.kelp_strategy(state, traderObject)
         result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
-        result |= self.spread_strategy(state, traderObject)
+        spread_strat = self.spread_strategy(state, traderObject)
+        result |= spread_strat
 
         conversions = 1
         traderData = jsonpickle.encode(traderObject)

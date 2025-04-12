@@ -12,9 +12,6 @@ from json import *
 # if momentum going down short it immediately (sell everything)
 #if momentum going up, buy everything (long position wow?)
 
-
-
-
 class Logger:
     def __init__(self) -> None:
         self.logs = ""

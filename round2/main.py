@@ -187,7 +187,7 @@ PARAMS = {
         "default_spread_mean": 48.762433333333334,
         "default_spread_std": 85.1180321401536,
         "spread_std_window": 45,
-        "zscore_threshold": 2,
+        "zscore_threshold": 7,
         "target_position": 60,
     }
 }
@@ -1152,9 +1152,9 @@ class Trader:
             traderObject = jsonpickle.decode(state.traderData)
 
         result = {}
-        result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
-        result[Product.KELP] = self.kelp_strategy(state, traderObject)
-        result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
+        # result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
+        # result[Product.KELP] = self.kelp_strategy(state, traderObject)
+        # result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
         spread_strat = self.spread_strategy(state, traderObject)
         result |= spread_strat
 

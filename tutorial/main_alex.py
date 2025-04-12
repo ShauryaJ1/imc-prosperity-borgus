@@ -8,8 +8,11 @@ from typing import Any
 from json import *
 
 
+
 # if momentum going down short it immediately (sell everything)
-# if momentum going up, buy everything (long position wow?)
+#if momentum going up, buy everything (long position wow?)
+
+
 
 
 class Logger:
@@ -169,12 +172,12 @@ PARAMS = {
         "join_edge": 0,
         "default_edge": 1,
         "momentum_weight": 0.08,
-        "small_window": 8,
-        "history_window": 20,  # 3 for momentum, #20 for ema with prev=fair
+        "small_window": 8,   
+        "history_window": 20,  #3 for momentum, #20 for ema with prev=fair
         "momentum_cutoff": 0.05,
-        "ema_param": 0.62,  # 0.62 gives 5,513 with claerwidth = 4
+        "ema_param": 0.62,  #0.62 gives 5,513 with claerwidth = 4
         "fft_cutoff": 0.2,
-        "entry_price": -1,  # empty right now, set it to whatever mmmid we entered at
+        "entry_price": -1, #empty right now, set it to whatever mmmid we entered at
     },
 }
 
@@ -412,7 +415,7 @@ class Trader:
             else:
                 mmmid_price = (mm_ask + mm_bid) / 2
 
-            # estimate with reversion
+            
 
             if traderObject.get("ink_last_price", None) != None:
                 last_price = traderObject["ink_last_price"]
@@ -431,7 +434,8 @@ class Trader:
 
             z_score_array: List[float] = self.trader_memory.get("z_score_arr", [])
 
-            mean = 1960
+            mean=1960
+
 
             if len(price_history) >= self.params[Product.SQUID_INK]["history_window"]:
                 # momentum = (price_history[-1] - price_history[0])   #this gives like 3.77k somehow, ???
@@ -453,29 +457,34 @@ class Trader:
 
                 #   #trying EMA
                 beta = self.params[Product.SQUID_INK]["ema_param"]
-
+                
                 # exponential_weighted_avg = (1 - beta)/(1 - beta**len(price_history)) * (sum(beta**i * price_history[-i] for i in range(len(price_history))))
-                exponential_weighted_avg = (1 - beta) * mmmid_price + (1 - beta) * sum(
-                    beta ** (i + 1) * price_history[-i - 1] for i in
-                    range(self.params[Product.SQUID_INK]["history_window"]))
+                exponential_weighted_avg = (1-beta) * mmmid_price + (1 - beta) * sum(beta**(i+1) * price_history[-i- 1] for i in range(self.params[Product.SQUID_INK]["history_window"]))
                 # short_ema = (1 - beta)
-                fair = exponential_weighted_avg
+                fair = exponential_weighted_avg 
 
                 volitality_array.append(np.std(price_history[-1:-21:-1]))
                 z_score_array.append((mmmid_price - mean) / np.std(price_history[-1:-21:-1]))
 
-            # update price history
+                volitality_array.append(np.std(price_history[-1:-21:-1]))
+                z_score_array.append((mmmid_price - mean)/np.std(price_history[-1:-21:-1]))
+
+
+            #update price history
             price_history.append(mmmid_price)
+
+
 
             self.trader_memory["ink_price_history"] = price_history
             self.trader_memory["volitality_arr"] = volitality_array
             self.trader_memory["z_score_arr"] = z_score_array
 
-            # if timestamp == 158000:
-                # import plotly.graph_objects as go
-                # fig = go.Figure(
-                #     data=go.Scatter(x=[2000 + i * 100 for i in range(0, 9981)], y=z_score_array, mode='lines+markers'))
-                # fig.write_image("plot.png")
+            if timestamp == 158000:
+                import plotly.graph_objects as go
+                fig = go.Figure(data=go.Scatter(x=[2000 + i * 100 for i in range(0, 9981)], y=z_score_array, mode='lines+markers'))
+                fig.write_image("plot.png")
+
+
 
             traderObject["ink_last_price"] = mmmid_price
             return mmmid_price
@@ -556,7 +565,11 @@ class Trader:
         #     slope, intercept = np.polyfit(x, y, 1)
         price_history: List[float] = self.trader_memory.get("ink_price_history", [])
 
-        ink_stop_loss_percent = 0.005  # 0.5%
+        ink_stop_loss_percent = 0.005 #0.5%
+        
+
+
+
 
         orders: List[Order] = []
         asks_above_fair = [
@@ -569,6 +582,8 @@ class Trader:
             for price in order_depth.buy_orders.keys()
             if price < fair_value - disregard_edge
         ]
+
+
 
         best_ask_above_fair = min(asks_above_fair) if len(asks_above_fair) > 0 else None
         best_bid_below_fair = max(bids_below_fair) if len(bids_below_fair) > 0 else None
@@ -598,16 +613,12 @@ class Trader:
 
         z_score_array = self.trader_memory["z_score_arr"]
 
-        if product == Product.SQUID_INK and len(price_history) >= self.params[Product.SQUID_INK]["history_window"]:
+        if product==Product.SQUID_INK and len(price_history) >= self.params[Product.SQUID_INK]["history_window"]:
             beta = self.params[Product.SQUID_INK]["ema_param"]
-
-            long_ema = (1 - beta) / (1 - beta ** (self.params[Product.SQUID_INK]["history_window"] + 1)) * (
-                        fair_value + sum(beta ** (i + 1) * price_history[-i - 1] for i in
-                                         range(self.params[Product.SQUID_INK]["history_window"])))
-            short_ema = (1 - beta) / (1 - beta ** (self.params[Product.SQUID_INK]["small_window"] + 1)) * (
-                        fair_value + sum(beta ** (i + 1) * price_history[-i - 1] for i in
-                                         range(self.params[Product.SQUID_INK]["small_window"])))
-
+            
+            long_ema= (1-beta)/(1-beta**(self.params[Product.SQUID_INK]["history_window"]+1)) * (fair_value + sum(beta**(i+1) * price_history[-i- 1] for i in range(self.params[Product.SQUID_INK]["history_window"])))
+            short_ema = (1-beta)/(1-beta**(self.params[Product.SQUID_INK]["small_window"]+1)) * (fair_value +  sum(beta**(i+1) * price_history[-i- 1] for i in range(self.params[Product.SQUID_INK]["small_window"])))
+            
             if short_ema > long_ema:
                 logger.logs += f"going up!\b"
             else:
@@ -615,34 +626,32 @@ class Trader:
             logger.logs += f"position: {position}\n"
             logger.logs += f"short_ema = {short_ema}\n long_ema = {long_ema}\n"
 
-            # want difference of at least xxx to be significant, buy to 50 if significant, else just buy to 0
+            #want difference of at least xxx to be significant, buy to 50 if significant, else just buy to 0
             # if short_ema > long_ema + 0.002 and position < 0: #change to 0 if its autistic
             if z_score_array and z_score_array[-1] < -5:
-                # its goin up!
-                # go on a long position, buy buy buy
+                #its goin up!
+                #go on a long position, buy buy buy
                 if best_ask_above_fair != None: bid = round(fair_value)
-                if best_ask_above_fair != None: ask = best_ask_above_fair + 3  # just put this super high in case anyone wants to buy for this ig
+                if best_ask_above_fair != None: ask = best_ask_above_fair + 3 #just put this super high in case anyone wants to buy for this ig
                 logger.logs += f"short_ema > long_ema\nPosition: {position}\nBid:{bid}\nAsk:{ask}"
 
             # elif short_ema < long_ema - 0.002 and position>0:
             elif z_score_array and z_score_array[-1] > 5:
-                # its goin down!
-                # go on a short position, sell sell sell
-                if best_bid_below_fair != None: bid = best_bid_below_fair - 3  # just put this super high in case someone wants to sell for this lmao
+                #its goin down!
+                #go on a short position, sell sell sell
+                if best_bid_below_fair != None: bid = best_bid_below_fair - 3 #just put this super high in case someone wants to sell for this lmao
                 if best_bid_below_fair != None: ask = round(fair_value)
                 logger.logs += f"short_ema < long_ema\nPosition: {position}\nBid:{bid}\nAsk:{ask}"
-
-            if position < 0 and fair_value < self.params[Product.SQUID_INK]["entry_price"] * (
-                    1 - ink_stop_loss_percent) and self.params[Product.SQUID_INK]["entry_price"] != -1:
-                # close the long position, too risky
-                # want to buy back to 0
-                if best_ask_above_fair != None: bid = round(fair_value)  # just get back to 0
+    
+            if position < 0 and fair_value < self.params[Product.SQUID_INK]["entry_price"] * (1-ink_stop_loss_percent) and self.params[Product.SQUID_INK]["entry_price"]!= -1:
+                #close the long position, too risky
+                #want to buy back to 0
+                if best_ask_above_fair != None: bid = round(fair_value)#just get back to 0
                 if best_ask_above_fair != None: ask = best_ask_above_fair + 3
-            if position > 0 and fair_value > self.params[Product.SQUID_INK]["entry_price"] * (
-                    1 + ink_stop_loss_percent) and self.params[Product.SQUID_INK]["entry_price"] != -1:
-                # close the short position, too risky
+            if position > 0 and fair_value > self.params[Product.SQUID_INK]["entry_price"] * (1+ink_stop_loss_percent) and self.params[Product.SQUID_INK]["entry_price"]!= -1:
+                #close the short position, too risky
                 if best_bid_below_fair != None: bid = best_bid_below_fair - 3
-                if best_bid_below_fair != None: ask = round(fair_value)  # just get back to 0
+                if best_bid_below_fair != None: ask = round(fair_value)#just get back to 0
 
         buy_order_volume, sell_order_volume = self.market_make(
             product,

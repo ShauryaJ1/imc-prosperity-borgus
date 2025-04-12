@@ -171,7 +171,7 @@ PARAMS = {
         "momentum_weight": 0.08,
         "small_window": 8,
         "history_window": 20,  # 3 for momentum, #20 for ema with prev=fair
-        "stdev_mul": 2.5,
+        "stdev_mul": 2,
         "momentum_cutoff": 0.05,
         "ema_param": 0.7,  # 0.62 gives 5,513 with claerwidth = 4
         "fft_cutoff": 0.2,
@@ -668,69 +668,108 @@ class Trader:
             ink_std = 0 if not hist else np.std(hist)
             K = self.params[Product.SQUID_INK]["stdev_mul"]
 
-            logger.print(moving_average)
-            logger.print(ink_std)
+            logger.print(f"Moving Average: {moving_average}")
+            logger.print(f"Ink stdev: {ink_std}")
 
-            ink_take_orders, buy_order_volume, sell_order_volume = (
-            self.take_orders(
+            def spearman_corr(x, y, n_perm=33, seed=None):
+                rng = np.random.default_rng(seed)
+
+                def rankdata(a):
+                    temp = a.argsort()
+                    ranks = np.empty_like(temp)
+                    ranks[temp] = np.arange(len(a))
+                    return ranks + 1  # 1-based rank
+
+                rx = rankdata(x)
+                ry = rankdata(y)
+                rho_obs = np.corrcoef(rx, ry)[0, 1]
+
+                # Permutation test
+                count = 0
+                for _ in range(n_perm):
+                    ry_perm = rng.permutation(ry)
+                    rho_perm = np.corrcoef(rx, ry_perm)[0, 1]
+                    if rho_perm >= rho_obs:
+                        count += 1
+
+                p_value = (count + 1) / (n_perm + 1)
+                return rho_obs, p_value
+
+
+
+            rho, p_val = spearman_corr(x= np.array([*range(0, len(hist))]), y= np.array(hist))
+            buy_order_volume, sell_order_volume = 0, 0
+
+            if rho > 0 and p_val < 0.03:
+                #going up!
+                logger.print("going up!")
+                logger.print(f"hist: {hist}")
+                bid = round(fair + 1)
+                ask = round(bid + 2 * ink_std)
+
+                orders = []
+
+                orders.append(Order(Product.SQUID_INK, bid, 20 * (1 - 2.71828 ** (-1 * abs(rho)))))
+                orders.append(Order(Product.SQUID_INK, ask, 20 * (1 - 2.71828 ** (-1 * abs(rho)))))
+
+                # buy_order_volume, sell_order_volume = self.market_make(
+                #     Product.SQUID_INK,
+                #     orders,
+                #     bid,
+                #     ask,
+                #     ink_position,
+                #     0,
+                #     0
+                # )
+
+            elif rho < 0 and 1 - p_val < 0.03:
+                #going down!
+                logger.print("going down!")
+                logger.print(f"hist: {hist}")
+                ask = round(fair - 1)
+                bid = round(ask - 2 * ink_std)
+
+                logger.print(bid, ask)
+
+                orders = []
+
+                orders.append(Order(Product.SQUID_INK, bid, 20 * (1 - 2.71828 ** (-1 * abs(rho)))))
+                orders.append(Order(Product.SQUID_INK, ask, 20 * (1 - 2.71828 ** (-1 * abs(rho)))))
+
+                # buy_order_volume, sell_order_volume = self.market_make(
+                #     Product.SQUID_INK,
+                #     orders,
+                #     bid,
+                #     ask,
+                #     ink_position,
+                #     0,
+                #     0
+                # )
+
+            else:
+                logger.print(f"hist: {hist}")
+                orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.SQUID_INK,
+                    state.order_depths[Product.SQUID_INK],
+                    fair_value= moving_average,
+                    take_width= round(K * ink_std),
+                    position= ink_position
+                ))
+
+            ink_clear_orders, buy_order_volume, sell_order_volume = (
+            self.clear_orders(
                 Product.SQUID_INK,
                 state.order_depths["SQUID_INK"],
                 fair_value= moving_average,
-                take_width= K * ink_std,
-                position= ink_position
+                clear_width= 0,
+                position= ink_position,
+                buy_order_volume= buy_order_volume,
+                sell_order_volume= sell_order_volume
             ))
 
-            # ink_clear_orders, buy_order_volume, sell_order_volume = (
-            # self.clear_orders(
-            #     Product.SQUID_INK,
-            #     state.order_depths["SQUID_INK"],
-            #     fair_value= moving_average,
-            #     clear_width= 0,
-            #     position= ink_position,
-            #     buy_order_volume= buy_order_volume,
-            #     sell_order_volume= sell_order_volume
-            # ))
-            #
-            price_history: List[float] = self.trader_memory.get("ink_price_history", [])
-
-            ink_stop_loss_percent = 0.005  # 0.5%
-
-            best_ask = None if not state.order_depths["SQUID_INK"].sell_orders else min(state.order_depths["SQUID_INK"].sell_orders)
-            best_bid = None if not state.order_depths["SQUID_INK"].buy_orders else max(state.order_depths["SQUID_INK"].buy_orders)
-
-            bid = None
-            ask = None
-
-            if -10 < ink_position < 10:
-                self.params[Product.SQUID_INK]["entry_price"] = fair
-
-            if ink_position < 0 and fair < self.params[Product.SQUID_INK]["entry_price"] * (
-                    1 - ink_stop_loss_percent) and self.params[Product.SQUID_INK]["entry_price"] != -1:
-                # close the long ink_position, too risky
-                # want to buy back to 0
-                if best_ask != None: bid = round(fair)  # just get back to 0
-                if best_ask != None: ask = best_ask + 3
-                flag = True
-            if ink_position > 0 and fair > self.params[Product.SQUID_INK]["entry_price"] * (
-                    1 + ink_stop_loss_percent) and self.params[Product.SQUID_INK]["entry_price"] != -1:
-                # close the short ink_position, too risky
-                if best_bid != None: bid = best_bid - 3
-                if best_bid != None: ask = round(fair)  # just get back to 0
-
-            stoploss_orders = []
-
-            if bid != None and ask != None:
-                self.market_make(
-                    Product.SQUID_INK,
-                    stoploss_orders,
-                    bid,
-                    ask,
-                    position= ink_position,
-                    buy_order_volume= buy_order_volume,
-                    sell_order_volume= sell_order_volume
-                )
-
-            return ink_take_orders + stoploss_orders
+            logger.print(orders + ink_clear_orders)
+            return orders + ink_clear_orders
 
         return []
 

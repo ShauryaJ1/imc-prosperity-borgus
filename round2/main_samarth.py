@@ -189,13 +189,13 @@ PARAMS = {
         "default_spread_mean": 48.762433333333334,
         "default_spread_std": 85.1180321401536,
         "spread_std_window": 45,
-        "zscore_threshold": 3,
+        "zscore_threshold": 3.01,
         "target_position": 60,
     },
     Product.SPREAD2: {
         "default_spread_mean_upper": 100,
         "default_spread_mean_lower": -45,
-        "default_spread_mean_avg": 30.23,
+        "default_spread_mean": 30.23,
         "default_spread_std": 85.1180321401536,
         "spread_std_window": 60,
         "zscore_threshold": 6,
@@ -1055,7 +1055,7 @@ class Trader:
     ):
 
         if target_position == basket_position:
-            return None
+            return {}
 
         target_quantity = abs(target_position - basket_position)
         basket_order_depth = order_depths[BASKETS[basket_num]]
@@ -1117,40 +1117,6 @@ class Trader:
             return aggregate_orders
 
 
-    # def mess_around_locally_spread(self,
-    #                                basket_position,
-    #                                order_depths,
-    #                                basket_num):
-    #         basket_fair_value = self.get_swmid(
-    #             order_depths[Product.SQUID_INK]
-    #         )
-    #         ink_take_orders, buy_order_volume, sell_order_volume = (
-    #             self.take_orders(
-    #                 BASKETS[basket_num],
-    #                 order_depths[BASKETS[basket_num]],
-    #                 basket_fair_value,
-    #                 self.params[Product.SQUID_INK]["take_width"],
-    #                 basket_position,
-    #                 self.params[Product.SQUID_INK]["prevent_adverse"],
-    #                 self.params[Product.SQUID_INK]["adverse_volume"],
-    #             )
-    #         )
-    #         ink_make_orders, _, _ = self.make_orders(
-    #             BASKETS[basket_num].
-    #             order_depths[BASKETS[basket_num]],
-    #             basket_fair_value,
-    #             basket_position,
-    #             buy_order_volume,
-    #             sell_order_volume,
-    #             self.params[Product.SQUID_INK]["disregard_edge"],
-    #             self.params[Product.SQUID_INK]["join_edge"],
-    #             self.params[Product.SQUID_INK]["default_edge"],
-    #         )
-    #         return (
-    #                 ink_take_orders + ink_clear_orders + ink_make_orders
-    #         )
-    #     return []
-
     def spread_orders(
             self,
             state: TradingState,
@@ -1173,8 +1139,8 @@ class Trader:
                 len(spread_data["spread_history"])
                 < self.params[SPREADS[basket_num]]["spread_std_window"]
         ):
-            # if state.timestamp != 0:
-            return {}
+            if state.timestamp != 0:
+                return {}
             if basket_num == 1:
                 # Go Short
                 return self.execute_spread_orders(
@@ -1198,8 +1164,32 @@ class Trader:
 
         spread_std = np.std(spread_data["spread_history"])
 
+
+        if basket_num == 2:
+            moving_avg = np.mean(spread_data["spread_history"][-20:])
+            diffs = [abs(moving_avg - self.params[SPREADS[basket_num]]["default_spread_mean_upper"]),
+                     abs(moving_avg - self.params[SPREADS[basket_num]]["default_spread_mean"]),
+                     abs(moving_avg - self.params[SPREADS[basket_num]]["default_spread_mean_lower"])]
+
+            if min(diffs) > 20:
+                return {}
+
+            if diffs[0] > max(diffs[1], diffs[2]):
+                mean = self.params[SPREADS[basket_num]]["default_spread_mean_upper"]
+            elif diffs[1] > max(diffs[0], diffs[2]):
+                mean = self.params[SPREADS[basket_num]]["default_spread_mean"]
+            else:
+                mean = self.params[SPREADS[basket_num]]["default_spread_mean_lower"]
+
+            mean = self.params[SPREADS[basket_num]]["default_spread_mean"]
+
+        else:
+            mean = self.params[SPREADS[basket_num]]["default_spread_mean"]
+
+
+
         zscore = (
-                         spread - self.params[SPREADS[basket_num]]["default_spread_mean"]
+                         spread - mean
                  ) / spread_std
 
         if zscore >= self.params[SPREADS[basket_num]]["zscore_threshold"]:
@@ -1292,13 +1282,21 @@ class Trader:
         result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
         spread_strat = self.spread_strategy(state, traderObject)
         spread2_strat = self.spread2_strategy(state, traderObject)
-        result |= spread_strat
+        # result |= spread_strat
 
         for product in spread2_strat:
             if product not in result:
                 result[product] = []
-            for order in spread2_strat[product]:
-                result[product].append(order)
+            if product in [Product.PICNIC_BASKET2]:
+                for order in spread2_strat[product]:
+                    result[product].append(order)
+
+        for product in spread_strat:
+            if product not in result:
+                result[product] = []
+            if product in [Product.PICNIC_BASKET1]:
+                for order in spread_strat[product]:
+                    result[product].append(order)
 
         conversions = 1
         traderData = jsonpickle.encode(traderObject)

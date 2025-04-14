@@ -279,44 +279,40 @@ PARAMS = {
         "target_position": 100,
     },
     Product.VOLCANIC_ROCK_VOUCHER_9500: {
-        "mean_volatility": 0.15959997370608378,
-        "threshold": 0.00163,
-        "strike": 10000,
+        "mean_volatility": 0.024,
+        "strike": 9500,
         "starting_time_to_expiry": 247 / 250,
-        "std_window": 6,
-        "zscore_threshold": 21,
+        "std_window": 3,
+        "zscore_threshold": 1,
     },
     Product.VOLCANIC_ROCK_VOUCHER_9750: {
-        "mean_volatility": 0.15959997370608378,
-        "threshold": 0.00163,
-        "strike": 10000,
+        "mean_volatility": 0.024,
+        "strike": 9750,
         "starting_time_to_expiry": 247 / 250,
-        "std_window": 6,
-        "zscore_threshold": 21,
+        "std_window": 3,
+        "zscore_threshold": 1,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10000: {
-        "mean_volatility": 0.15959997370608378,
-        "threshold": 0.00163,
+        "mean_volatility": 0.024,
         "strike": 10000,
         "starting_time_to_expiry": 247 / 250,
-        "std_window": 6,
-        "zscore_threshold": 21,
+        "std_window": 3,
+        "zscore_threshold": 1,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10250: {
-        "mean_volatility": 0.15959997370608378,
-        "threshold": 0.00163,
-        "strike": 10000,
+        "mean_volatility": 0.024,
+        "strike": 10250,
         "starting_time_to_expiry": 247 / 250,
-        "std_window": 6,
-        "zscore_threshold": 21,
+        "std_window": 3,
+        "zscore_threshold": 1,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10500: {
-        "mean_volatility": 0.15959997370608378,
-        "threshold": 0.00163,
-        "strike": 10000,
+        "mean_volatility": 0.024,
+        # "threshold": 0.00163,
+        "strike": 10500,
         "starting_time_to_expiry": 247 / 250,
-        "std_window": 6,
-        "zscore_threshold": 21,
+        "std_window": 3,
+        "zscore_threshold": 1,
     },
 
 }
@@ -1596,7 +1592,7 @@ class Trader:
 
         vol_z_score = (
             volatility - self.params[COUPON]["mean_volatility"]
-        ) / np.std(traderData["past_coupon_vol"])
+        ) / (np.std(traderData["past_coupon_vol"])+ np.finfo(float).eps) #divide by zero error
         # print(f"vol_z_score: {vol_z_score}")
         # print(f"zscore_threshold: {self.params[COUPON]['zscore_threshold']}")
         if vol_z_score >= self.params[COUPON]["zscore_threshold"]:

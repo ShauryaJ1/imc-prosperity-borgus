@@ -6,6 +6,7 @@ import numpy as np
 import math
 from typing import Any, List, Dict
 from json import *
+import copy
 
 from math import log, sqrt, exp
 from statistics import NormalDist
@@ -284,6 +285,13 @@ PARAMS = {
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
         "zscore_threshold": 1,
+        "take_width": 1, 
+        "clear_width": 0,
+        "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
+        "join_edge": 2,  # joins orders within this edge
+        "default_edge": 4, 
+        "prevent_adverse": True,
+        "adverse_volume": 15,
     },
     Product.VOLCANIC_ROCK_VOUCHER_9750: {
         "mean_volatility": 0.024,
@@ -291,6 +299,13 @@ PARAMS = {
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
         "zscore_threshold": 1,
+        "take_width": 1,
+        "clear_width": 0,
+        "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
+        "join_edge": 2,  # joins orders within this edge
+        "default_edge": 4,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10000: {
         "mean_volatility": 0.024,
@@ -298,6 +313,13 @@ PARAMS = {
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
         "zscore_threshold": 1,
+        "take_width": 1,
+        "clear_width": 0,
+        "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
+        "join_edge": 2,  # joins orders within this edge
+        "default_edge": 4,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10250: {
         "mean_volatility": 0.024,
@@ -305,6 +327,13 @@ PARAMS = {
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
         "zscore_threshold": 1,
+        "take_width": 1,
+        "clear_width": 0,
+        "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
+        "join_edge": 2,  # joins orders within this edge
+        "default_edge": 4,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10500: {
         "mean_volatility": 0.024,
@@ -313,6 +342,13 @@ PARAMS = {
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
         "zscore_threshold": 1,
+        "take_width": 1,
+        "clear_width": 0,
+        "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
+        "join_edge": 2,  # joins orders within this edge
+        "default_edge": 4,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
     },
 
 }
@@ -789,7 +825,7 @@ class Trader:
             elif position < -1 * soft_position_limit:
                 bid += 1
 
-        if -10 < position < 10:
+        if -10 < position < 10 and product == Product.SQUID_INK:
             self.params[Product.SQUID_INK]["entry_price"] = fair_value
 
         z_score_array = self.trader_memory["z_score_arr"]
@@ -1571,78 +1607,47 @@ class Trader:
 
     def volcanic_rock_coupon_orders(
         self,
-        COUPON: Product,
+        COUPON: str,
         volcanic_rock_coupon_order_depth: OrderDepth,
         volcanic_rock_coupon_position: int,
         traderData: Dict[str, Any],
-        volatility: float,
+        tte: float,
+        volatility: float
     ) -> List[Order]:
-        traderData["past_coupon_vol"].append(volatility)   #how to do this for multiple coupons
-        if (
-            len(traderData["past_coupon_vol"])
-            < self.params[COUPON]["std_window"]
-        ):
-            return None, None
 
-        if (
-            len(traderData["past_coupon_vol"])
-            > self.params[COUPON]["std_window"]
-        ):
-            traderData["past_coupon_vol"].pop(0)
+        coupon_mid = self.get_volcanic_rock_coupon_mid_price(volcanic_rock_coupon_order_depth, traderData)
+        call_fair_price = BlackScholes.black_scholes_call(coupon_mid, 
+            self.params[COUPON]["strike"], tte, volatility)
 
-        vol_z_score = (
-            volatility - self.params[COUPON]["mean_volatility"]
-        ) / (np.std(traderData["past_coupon_vol"])+ np.finfo(float).eps) #divide by zero error
-        # print(f"vol_z_score: {vol_z_score}")
-        # print(f"zscore_threshold: {self.params[COUPON]['zscore_threshold']}")
-        if vol_z_score >= self.params[COUPON]["zscore_threshold"]:
-            if volcanic_rock_coupon_position != -self.LIMIT[COUPON]:
-                target_volcanic_rock_coupon_position = -self.LIMIT[COUPON]
-                if len(volcanic_rock_coupon_order_depth.buy_orders) > 0:
-                    best_bid = max(volcanic_rock_coupon_order_depth.buy_orders.keys())
-                    target_quantity = abs(
-                        target_volcanic_rock_coupon_position - volcanic_rock_coupon_position
-                    )
-                    quantity = min(
-                        target_quantity,
-                        abs(volcanic_rock_coupon_order_depth.buy_orders[best_bid]),
-                    )
-                    quote_quantity = target_quantity - quantity
-                    if quote_quantity == 0:
-                        return [Order(COUPON, best_bid, -quantity)], []
-                    else:
-                        return [Order(COUPON, best_bid, -quantity)], [
-                            Order(COUPON, best_bid, -quote_quantity)
-                        ]
+        take_orders, buy_order_volume, sell_order_volume = self.take_orders(
+            COUPON,
+            volcanic_rock_coupon_order_depth, call_fair_price,
+            self.params[COUPON]["take_width"],
+            volcanic_rock_coupon_position,
+            self.params[COUPON]["prevent_adverse"],
+            self.params[COUPON]["adverse_volume"],
+        )
 
-        elif vol_z_score <= -self.params[COUPON]["zscore_threshold"]:
-            if volcanic_rock_coupon_position != self.LIMIT[COUPON]:
-                target_volcanic_rock_coupon_position = self.LIMIT[COUPON]
-                if len(volcanic_rock_coupon_order_depth.sell_orders) > 0:
-                    best_ask = min(volcanic_rock_coupon_order_depth.sell_orders.keys())
-                    target_quantity = abs(
-                        target_volcanic_rock_coupon_position - volcanic_rock_coupon_position
-                    )
-                    quantity = min(
-                        target_quantity,
-                        abs(volcanic_rock_coupon_order_depth.sell_orders[best_ask]),
-                    )
-                    quote_quantity = target_quantity - quantity
-                    if quote_quantity == 0:
-                        return [Order(COUPON, best_ask, quantity)], []
-                    else:
-                        return [Order(COUPON, best_ask, quantity)], [
-                            Order(COUPON, best_ask, quote_quantity)
-                        ]
+        # clear_orders, buy_order_volume, sell_order_volume = self.clear_orders(
+        #     COUPON,
+        #     volcanic_rock_coupon_order_depth, call_fair_price,
+        #     self.params[COUPON]["clear_width"],
+        #     volcanic_rock_coupon_position,
+        #     buy_order_volume,
+        #     sell_order_volume,
+        # )
 
-        return None, None
-
-
-
-
-
-
-
+        make_orders, _, _ = self.make_orders(
+            COUPON,
+            volcanic_rock_coupon_order_depth, call_fair_price,
+            volcanic_rock_coupon_position,
+            buy_order_volume,
+            sell_order_volume,
+            self.params[COUPON]["disregard_edge"],
+            self.params[COUPON]["join_edge"],
+            self.params[COUPON]["default_edge"],
+        )
+        return take_orders, make_orders
 
     def run(self, state: TradingState):
         traderObject = {}
@@ -1651,27 +1656,27 @@ class Trader:
 
         result = {}
         result[Product.VOLCANIC_ROCK] = []
-        # result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
-        # result[Product.KELP] = self.kelp_strategy(state, traderObject)
-        # result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
-        # spread_strat = self.spread_strategy(state, traderObject)
-        # spread2_strat = self.spread2_strategy(state, traderObject)
+        result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
+        result[Product.KELP] = self.kelp_strategy(state, traderObject)
+        result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
+        spread_strat = self.spread_strategy(state, traderObject)
+        spread2_strat = self.spread2_strategy(state, traderObject)
         # result |= spread_strat
-
-        # for product in spread2_strat:
-        #     if product not in result:
-        #         result[product] = []
-        #     if product in [Product.PICNIC_BASKET2]:
-        #         for order in spread2_strat[product]:
-        #             result[product].append(order)
-
-        # for product in spread_strat:
-        #     if product not in result:
-        #         result[product] = []
-        #     if product in [Product.PICNIC_BASKET1]:
-        #         for order in spread_strat[product]:
-        #             result[product].append(order)
-
+        # #
+        for product in spread2_strat:
+            if product not in result:
+                result[product] = []
+            if product in [Product.PICNIC_BASKET2]:
+                for order in spread2_strat[product]:
+                    result[product].append(order)
+        # #
+        for product in spread_strat:
+            if product not in result:
+                result[product] = []
+            if product in [Product.PICNIC_BASKET1]:
+                for order in spread_strat[product]:
+                    result[product].append(order)
+        #
         # if state.timestamp == 0:
         #     result["VOLCANIC_ROCK_VOUCHER_9500"] = [Order("VOLCANIC_ROCK_VOUCHER_9500", 1_100, 1)]
         # if state.timestamp == 5_000:
@@ -1681,7 +1686,11 @@ class Trader:
 
 
         #loop through this once per coupon
-        for COUPON in [Product.VOLCANIC_ROCK_VOUCHER_9500, Product.VOLCANIC_ROCK_VOUCHER_9750, Product.VOLCANIC_ROCK_VOUCHER_10000, Product.VOLCANIC_ROCK_VOUCHER_10250, Product.VOLCANIC_ROCK_VOUCHER_10500]:
+        for COUPON in [Product.VOLCANIC_ROCK_VOUCHER_9500,
+                       Product.VOLCANIC_ROCK_VOUCHER_9750,
+                       Product.VOLCANIC_ROCK_VOUCHER_10000,
+                       Product.VOLCANIC_ROCK_VOUCHER_10250,
+                       Product.VOLCANIC_ROCK_VOUCHER_10500]:
             if COUPON not in traderObject:
                 traderObject[COUPON] = {
                     "prev_coupon_price": 0,
@@ -1724,6 +1733,7 @@ class Trader:
                     self.params[COUPON]["strike"],
                     tte,
                 )
+
                 delta = BlackScholes.delta(
                     volcanic_rock_mid_price,
                     self.params[COUPON]["strike"],
@@ -1731,12 +1741,15 @@ class Trader:
                     volatility,
                 )
 
+                copied_order_depths = copy.deepcopy(state.order_depths[COUPON])
+
                 volcanic_rock_coupon_take_orders, volcanic_rock_coupon_make_orders = (
                     self.volcanic_rock_coupon_orders(
                         COUPON,
-                        state.order_depths[COUPON],
+                        copied_order_depths,
                         volcanic_rock_coupon_position,
                         traderObject[COUPON],
+                        tte,
                         volatility,
                     )
                 )
@@ -1768,3 +1781,4 @@ class Trader:
         logger.flush(state, result, 1, state.traderData)
 
         return result, conversions, traderData
+

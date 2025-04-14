@@ -139,7 +139,9 @@ class Product:
     PICNIC_BASKET1 = "PICNIC_BASKET1"
     PICNIC_BASKET2 = "PICNIC_BASKET2"
     SPREAD = "SPREAD"
+    SPREAD2 = "SPREAD2"
     SYNTHETIC = "SYNTHETIC"
+    SYNTHETIC2 = "SYNTHETIC2"
 
 PARAMS = {
     Product.RAINFOREST_RESIN: {
@@ -184,11 +186,59 @@ PARAMS = {
         "entry_price": -1,  # empty right now, set it to whatever mmmid we entered at
     },
     Product.SPREAD: {
-        "default_spread_mean": 379.50439988484239,
-        "default_spread_std": 76.07966,
+        "default_spread_mean": 48.762433333333334,
+        "default_spread_std": 85.1180321401536,
         "spread_std_window": 45,
-        "zscore_threshold": 7,
-        "target_position": 58,
+        "zscore_threshold": 3.01,
+        "target_position": 60,
+    },
+    Product.SPREAD2: {
+        "default_spread_mean_upper": 100,
+        "default_spread_mean_lower": -45,
+        "default_spread_mean": 30.23,
+        "default_spread_std": 85.1180321401536,
+        "spread_std_window": 60,
+        "zscore_threshold": 6,
+        "target_position": 100,
+    },
+    Product.CROISSANTS:{
+        "take_width": 1,
+        "clear_width": 0,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
+        "reversion_beta": -0.229,
+        "disregard_edge": 1,
+        "join_edge": 0,
+        "default_edge": 1,
+        "momentum_weight": 0.40,
+        "history_window": 3,
+        "momentum_cutoff": 0.1
+    },
+    Product.DJEMBES:{
+        "take_width": 1,
+        "clear_width": 0,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
+        "reversion_beta": -0.229,
+        "disregard_edge": 1,
+        "join_edge": 0,
+        "default_edge": 1,
+        "momentum_weight": 0.40,
+        "history_window": 3,
+        "momentum_cutoff": 0.1
+    },
+    Product.JAMS:{
+        "take_width": 1,
+        "clear_width": 0,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
+        "reversion_beta": -0.229,
+        "disregard_edge": 1,
+        "join_edge": 0,
+        "default_edge": 1,
+        "momentum_weight": 0.40,
+        "history_window": 3,
+        "momentum_cutoff": 0.1
     }
 }
 
@@ -198,8 +248,29 @@ BASKET_WEIGHTS = {
     Product.DJEMBES: 1
 }
 
+BASKET2_WEIGHTS = {
+    Product.CROISSANTS: 4,
+    Product.JAMS: 2,
+    Product.DJEMBES: 0
+}
 
+BASKETS = {
+    1: Product.PICNIC_BASKET1,
+    2: Product.PICNIC_BASKET2
+}
+SPREADS = {
+    1: Product.SPREAD,
+    2: Product.SPREAD2
+}
+SYNTHETICS = {
+    1: Product.SYNTHETIC,
+    2: Product.SYNTHETIC2
+}
 
+WEIGHTS = {
+    1: BASKET_WEIGHTS,
+    2: BASKET2_WEIGHTS
+}
 
 class Trader:
     def __init__(self, params=None):
@@ -220,7 +291,10 @@ class Trader:
             "ink_price_history": [],
             "kelp_price_history": [],
             "volitality_arr": [],
-            "z_score_arr": []
+            "z_score_arr": [],
+            "croissants_price_history": [],
+            "djembes_price_history": [],
+            "jams_price_history": []
         }
 
     def take_best_orders(
@@ -441,8 +515,6 @@ class Trader:
             else:
                 mmmid_price = (mm_ask + mm_bid) / 2
 
-            # estimate with reversion
-
             if traderObject.get("ink_last_price", None) != None:
                 last_price = traderObject["ink_last_price"]
                 last_returns = (mmmid_price - last_price) / last_price
@@ -462,8 +534,23 @@ class Trader:
 
             mean = 1960
 
+            window = self.params[Product.SQUID_INK]["history_window"]
             if len(price_history) >= self.params[Product.SQUID_INK]["history_window"]:
                 # momentum = (price_history[-1] - price_history[0])   #this gives like 3.77k somehow, ???
+
+                x = np.arange(window)
+                y = np.array(price_history[-window:])
+
+                slope, intercept = np.polyfit(x, y, 1)
+
+                # subtract by the line to have mean 0 over the past stuffs
+                working_prices = price_history[-window:]
+                working_prices = [working_prices[i] + i * slope for i in range(window)]
+                tempmean = np.mean(working_prices)
+
+                # working_prices = [i - tempmean for i in working_prices]
+
+                curr_thing = mmmid_price - slope * window
 
                 # x = np.arange(len(price_history))
                 # y = np.array(price_history)
@@ -490,8 +577,8 @@ class Trader:
                 # short_ema = (1 - beta)
                 fair = exponential_weighted_avg
 
-                volitality_array.append(np.std(price_history[-1:-21:-1]))
-                z_score_array.append((mmmid_price - mean) / np.std(price_history[-1:-21:-1]))
+                volitality_array.append(np.std(price_history[-1:-1 - window:-1]))
+                z_score_array.append((curr_thing - np.mean(working_prices)) / np.std(working_prices))
 
             # update price history
             price_history.append(mmmid_price)
@@ -500,9 +587,233 @@ class Trader:
             self.trader_memory["volitality_arr"] = volitality_array
             self.trader_memory["z_score_arr"] = z_score_array
 
+            # if timestamp == 958000:
+            #     import plotly.graph_objects as go
+            #     fig = go.Figure(
+            #         data=go.Scatter(x=[2000 + i * 100 for i in range(0, 9981)], y=z_score_array, mode='lines+markers'))
+            #     fig.write_image("plot.png")
+
             traderObject["ink_last_price"] = mmmid_price
             return mmmid_price
         return None
+    
+
+
+
+    def croissants_fair_value(self, order_depth: OrderDepth, traderObject) -> float:
+        if len(order_depth.sell_orders) != 0 and len(order_depth.buy_orders) != 0:
+            best_ask = min(order_depth.sell_orders.keys())
+            best_bid = max(order_depth.buy_orders.keys())
+            filtered_ask = [
+                price
+                for price in order_depth.sell_orders.keys()
+                if abs(order_depth.sell_orders[price])
+                   >= self.params[Product.CROISSANTS]["adverse_volume"]
+            ]
+            filtered_bid = [
+                price
+                for price in order_depth.buy_orders.keys()
+                if abs(order_depth.buy_orders[price])
+                   >= self.params[Product.CROISSANTS]["adverse_volume"]
+            ]
+            mm_ask = min(filtered_ask) if len(filtered_ask) > 0 else None
+            mm_bid = max(filtered_bid) if len(filtered_bid) > 0 else None
+            if mm_ask == None or mm_bid == None:
+                if traderObject.get("croissants_last_price", None) == None:
+                    mmmid_price = (best_ask + best_bid) / 2
+                else:
+                    mmmid_price = traderObject["croissants_last_price"]
+            else:
+                mmmid_price = (mm_ask + mm_bid) / 2
+
+            # estimate with reversion
+            if traderObject.get("croissants_last_price", None) != None:
+                last_price = traderObject["croissants_last_price"]
+                last_returns = (mmmid_price - last_price) / last_price
+                pred_returns = (
+                        last_returns * self.params[Product.CROISSANTS]["reversion_beta"]
+                )
+                fair = mmmid_price + (mmmid_price * pred_returns)
+            else:
+                fair = mmmid_price
+
+            price_history: List[float] = self.trader_memory.get("croissants_price_history", [])
+            # adjust with momentum?
+            if len(price_history) >= 2:
+                # momentum = (price_history[-1] - price_history[0])
+
+                x = np.arange(
+                    len(price_history))  # for linreg, its literally better to have a negative momentum weight?
+                y = np.array(price_history)
+                slope, intercept = np.polyfit(x, y, 1)
+                y_pred = slope * x + intercept
+
+                ss_res = np.sum((y - y_pred) ** 2)
+                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+
+                momentum = 0
+                if r_squared >= self.params[Product.CROISSANTS]["momentum_cutoff"]:
+                    momentum = slope
+
+                fair += self.params[Product.CROISSANTS]["momentum_weight"] * momentum
+
+            traderObject["croissants_last_price"] = fair
+
+            # update price_history
+            price_history.append(fair)
+
+            if len(price_history) > self.params[Product.CROISSANTS]["history_window"]:
+                price_history.pop(0)
+
+            self.trader_memory["croissants_price_history"] = price_history
+
+            return mmmid_price
+        return None
+
+    
+    def jams_fair_value(self, order_depth: OrderDepth, traderObject) -> float:
+        if len(order_depth.sell_orders) != 0 and len(order_depth.buy_orders) != 0:
+            best_ask = min(order_depth.sell_orders.keys())
+            best_bid = max(order_depth.buy_orders.keys())
+            filtered_ask = [
+                price
+                for price in order_depth.sell_orders.keys()
+                if abs(order_depth.sell_orders[price])
+                   >= self.params[Product.JAMS]["adverse_volume"]
+            ]
+            filtered_bid = [
+                price
+                for price in order_depth.buy_orders.keys()
+                if abs(order_depth.buy_orders[price])
+                   >= self.params[Product.JAMS]["adverse_volume"]
+            ]
+            mm_ask = min(filtered_ask) if len(filtered_ask) > 0 else None
+            mm_bid = max(filtered_bid) if len(filtered_bid) > 0 else None
+            if mm_ask == None or mm_bid == None:
+                if traderObject.get("jams_last_price", None) == None:
+                    mmmid_price = (best_ask + best_bid) / 2
+                else:
+                    mmmid_price = traderObject["jams_last_price"]
+            else:
+                mmmid_price = (mm_ask + mm_bid) / 2
+
+            # estimate with reversion
+            if traderObject.get("jams_last_price", None) != None:
+                last_price = traderObject["jams_last_price"]
+                last_returns = (mmmid_price - last_price) / last_price
+                pred_returns = (
+                        last_returns * self.params[Product.KELP]["reversion_beta"]
+                )
+                fair = mmmid_price + (mmmid_price * pred_returns)
+            else:
+                fair = mmmid_price
+
+            price_history: List[float] = self.trader_memory.get("jams_price_history", [])
+            # adjust with momentum?
+            if len(price_history) >= 2:
+                # momentum = (price_history[-1] - price_history[0])
+
+                x = np.arange(
+                    len(price_history))  # for linreg, its literally better to have a negative momentum weight?
+                y = np.array(price_history)
+                slope, intercept = np.polyfit(x, y, 1)
+                y_pred = slope * x + intercept
+
+                ss_res = np.sum((y - y_pred) ** 2)
+                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+
+                momentum = 0
+                if r_squared >= self.params[Product.JAMS]["momentum_cutoff"]:
+                    momentum = slope
+
+                fair += self.params[Product.JAMS]["momentum_weight"] * momentum
+
+            traderObject["jams_last_price"] = fair
+
+            # update price_history
+            price_history.append(fair)
+
+            if len(price_history) > self.params[Product.JAMS]["history_window"]:
+                price_history.pop(0)
+
+            self.trader_memory["jams_price_history"] = price_history
+
+            return mmmid_price
+        return None
+
+    def djembes_fair_value(self, order_depth: OrderDepth, traderObject) -> float:
+        if len(order_depth.sell_orders) != 0 and len(order_depth.buy_orders) != 0:
+            best_ask = min(order_depth.sell_orders.keys())
+            best_bid = max(order_depth.buy_orders.keys())
+            filtered_ask = [
+                price
+                for price in order_depth.sell_orders.keys()
+                if abs(order_depth.sell_orders[price])
+                   >= self.params[Product.DJEMBES]["adverse_volume"]
+            ]
+            filtered_bid = [
+                price
+                for price in order_depth.buy_orders.keys()
+                if abs(order_depth.buy_orders[price])
+                   >= self.params[Product.DJEMBES]["adverse_volume"]
+            ]
+            mm_ask = min(filtered_ask) if len(filtered_ask) > 0 else None
+            mm_bid = max(filtered_bid) if len(filtered_bid) > 0 else None
+            if mm_ask == None or mm_bid == None:
+                if traderObject.get("djembes_last_price", None) == None:
+                    mmmid_price = (best_ask + best_bid) / 2
+                else:
+                    mmmid_price = traderObject["djembes_last_price"]
+            else:
+                mmmid_price = (mm_ask + mm_bid) / 2
+
+            # # estimate with reversion
+            # if traderObject.get("djembes_last_price", None) != None:
+            #     last_price = traderObject["djembes_last_price"]
+            #     last_returns = (mmmid_price - last_price) / last_price
+            #     pred_returns = (
+            #             last_returns * self.params[Product.KELP]["reversion_beta"]
+            #     )
+            #     fair = mmmid_price + (mmmid_price * pred_returns)
+            # else:
+            #     fair = mmmid_price
+
+            # price_history: List[float] = self.trader_memory.get("djembes_price_history", [])
+            # # adjust with momentum?
+            # if len(price_history) >= 2:
+            #     # momentum = (price_history[-1] - price_history[0])
+
+            #     x = np.arange(
+            #         len(price_history))  # for linreg, its literally better to have a negative momentum weight?
+            #     y = np.array(price_history)
+            #     slope, intercept = np.polyfit(x, y, 1)
+            #     y_pred = slope * x + intercept
+
+            #     ss_res = np.sum((y - y_pred) ** 2)
+            #     ss_tot = np.sum((y - np.mean(y)) ** 2)
+            #     r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+
+            #     momentum = 0
+            #     if r_squared >= self.params[Product.DJEMBES]["momentum_cutoff"]:
+            #         momentum = slope
+
+            #     fair += self.params[Product.DJEMBES]["momentum_weight"] * momentum
+
+            # traderObject["djembes_last_price"] = fair
+
+            # # update price_history
+            # price_history.append(fair)
+
+            # if len(price_history) > self.params[Product.DJEMBES]["history_window"]:
+            #     price_history.pop(0)
+
+            # self.trader_memory["djembes_price_history"] = price_history
+
+            return mmmid_price
+        return None
+
 
     def take_orders(
             self,
@@ -571,6 +882,13 @@ class Trader:
             # will penny all other levels with higher edge
     ):
 
+        # slope = 0
+        # if product == Product.SQUID_INK:
+        #     price_history: List[float] = self.trader_memory.get("ink_price_history", [])
+        #     x = np.arange(len(price_history))
+        #     y = np.array(price_history)
+        #     slope, intercept = np.polyfit(x, y, 1)
+        
         orders: List[Order] = []
         asks_above_fair = [
             price
@@ -606,6 +924,63 @@ class Trader:
             elif position < -1 * soft_position_limit:
                 bid += 1
 
+        if -10 < position < 10 and product == Product.SQUID_INK:
+            self.params[Product.SQUID_INK]["entry_price"] = fair_value
+
+        z_score_array = self.trader_memory["z_score_arr"]
+
+        if product == Product.SQUID_INK and len(self.trader_memory.get("ink_price_history", [])) >= self.params[Product.SQUID_INK]["history_window"]:
+
+            price_history: List[float] = self.trader_memory.get("ink_price_history", [])
+
+            ink_stop_loss_percent = 0.005  # 0.5%
+            ink_stop_loss = 10
+
+            beta = self.params[Product.SQUID_INK]["ema_param"]
+
+            long_ema = (1 - beta) / (1 - beta ** (self.params[Product.SQUID_INK]["history_window"] + 1)) * (
+                        fair_value + sum(beta ** (i + 1) * price_history[-i - 1] for i in
+                                         range(self.params[Product.SQUID_INK]["history_window"])))
+            short_ema = (1 - beta) / (1 - beta ** (self.params[Product.SQUID_INK]["small_window"] + 1)) * (
+                        fair_value + sum(beta ** (i + 1) * price_history[-i - 1] for i in
+                                         range(self.params[Product.SQUID_INK]["small_window"])))
+
+            if short_ema > long_ema:
+                logger.logs += f"going up!\b"
+            else:
+                logger.logs += f"going down!\n"
+            logger.logs += f"position: {position}\n"
+            logger.logs += f"short_ema = {short_ema}\n long_ema = {long_ema}\n"
+
+            # want difference of at least xxx to be significant, buy to 50 if significant, else just buy to 0
+            # if short_ema > long_ema + 0.002 and position < 0: #change to 0 if its autistic
+            if z_score_array and z_score_array[-1] < -4:
+                # its goin up!
+                # go on a long position, buy buy buy
+                bid = round(fair_value)
+                if best_ask_above_fair != None: ask = best_ask_above_fair + 3  # just put this super high in case anyone wants to buy for this ig
+                logger.logs += f"short_ema > long_ema\nPosition: {position}\nBid:{bid}\nAsk:{ask}"
+
+                bid = fair_value
+            # elif short_ema < long_ema - 0.002 and position>0:
+            elif z_score_array and z_score_array[-1] > 4:
+                # its goin down!
+                # go on a short position, sell sell sell
+                if best_bid_below_fair != None: bid = best_bid_below_fair - 3  # just put this super high in case someone wants to sell for this lmao
+                ask = round(fair_value)
+                logger.logs += f"short_ema < long_ema\nPosition: {position}\nBid:{bid}\nAsk:{ask}"
+
+            if position < 0 and fair_value < self.params[Product.SQUID_INK]["entry_price"] - ink_stop_loss and \
+                    self.params[Product.SQUID_INK]["entry_price"] != -1:
+                # close the long position, too risky
+                # want to buy back to 0
+                if best_ask_above_fair != None: bid = round(fair_value)  # just get back to 0
+                if best_ask_above_fair != None: ask = best_ask_above_fair + 3
+            if position > 0 and fair_value > self.params[Product.SQUID_INK]["entry_price"] + ink_stop_loss and \
+                    self.params[Product.SQUID_INK]["entry_price"] != -1:
+                # close the short position, too risky
+                if best_bid_below_fair != None: bid = best_bid_below_fair - 3
+                if best_bid_below_fair != None: ask = round(fair_value)  # just get back to 0
 
         buy_order_volume, sell_order_volume = self.market_make(
             product,
@@ -618,7 +993,6 @@ class Trader:
         )
 
         return orders, buy_order_volume, sell_order_volume
-
 
     def resin_strategy(self, state: TradingState, traderObject):
         if Product.RAINFOREST_RESIN in self.params and Product.RAINFOREST_RESIN in state.order_depths:
@@ -755,7 +1129,148 @@ class Trader:
                     ink_take_orders + ink_clear_orders + ink_make_orders
             )
         return []
+    
 
+    def croissants_strategy(self, state: TradingState, traderObject):
+        if Product.CROISSANTS in self.params and Product.CROISSANTS in state.order_depths:
+            croissants_position = (
+                state.position[Product.CROISSANTS]
+                if Product.CROISSANTS in state.position
+                else 0
+            )
+            croissants_fair_value = self.croissants_fair_value(
+                state.order_depths[Product.CROISSANTS], traderObject
+            )
+            croissants_take_orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.CROISSANTS,
+                    state.order_depths[Product.CROISSANTS],
+                    croissants_fair_value,
+                    self.params[Product.CROISSANTS]["take_width"],
+                    croissants_position,
+                    self.params[Product.CROISSANTS]["prevent_adverse"],
+                    self.params[Product.CROISSANTS]["adverse_volume"],
+                )
+            )
+            croissants_clear_orders, buy_order_volume, sell_order_volume = (
+                self.clear_orders(
+                    Product.CROISSANTS,
+                    state.order_depths[Product.CROISSANTS],
+                    croissants_fair_value,
+                    self.params[Product.CROISSANTS]["clear_width"],
+                    croissants_position,
+                    buy_order_volume,
+                    sell_order_volume,
+                )
+            )
+            croissants_make_orders, _, _ = self.make_orders(
+                Product.CROISSANTS,
+                state.order_depths[Product.CROISSANTS],
+                croissants_fair_value,
+                croissants_position,
+                buy_order_volume,
+                sell_order_volume,
+                self.params[Product.CROISSANTS]["disregard_edge"],
+                self.params[Product.CROISSANTS]["join_edge"],
+                self.params[Product.CROISSANTS]["default_edge"],
+            )
+            return croissants_take_orders + croissants_clear_orders + croissants_make_orders
+        return []
+
+
+    def jams_strategy(self, state: TradingState, traderObject):
+        if Product.JAMS in self.params and Product.JAMS in state.order_depths:
+            jams_position = (
+                state.position[Product.JAMS]
+                if Product.JAMS in state.position
+                else 0
+            )
+            jams_fair_value = self.jams_fair_value(
+                state.order_depths[Product.JAMS], traderObject
+            )
+            jams_take_orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.JAMS,
+                    state.order_depths[Product.JAMS],
+                    jams_fair_value,
+                    self.params[Product.JAMS]["take_width"],
+                    jams_position,
+                    self.params[Product.JAMS]["prevent_adverse"],
+                    self.params[Product.JAMS]["adverse_volume"],
+                )
+            )
+            jams_clear_orders, buy_order_volume, sell_order_volume = (
+                self.clear_orders(
+                    Product.JAMS,
+                    state.order_depths[Product.JAMS],
+                    jams_fair_value,
+                    self.params[Product.JAMS]["clear_width"],
+                    jams_position,
+                    buy_order_volume,
+                    sell_order_volume,
+                )
+            )
+            jams_make_orders, _, _ = self.make_orders(
+                Product.JAMS,
+                state.order_depths[Product.JAMS],
+                jams_fair_value,
+                jams_position,
+                buy_order_volume,
+                sell_order_volume,
+                self.params[Product.JAMS]["disregard_edge"],
+                self.params[Product.JAMS]["join_edge"],
+                self.params[Product.JAMS]["default_edge"],
+            )
+            return jams_take_orders + jams_clear_orders + jams_make_orders
+        return []
+    
+
+    def djembes_strategy(self, state: TradingState, traderObject):
+        if Product.DJEMBES in self.params and Product.DJEMBES in state.order_depths:
+            djembes_position = (
+                state.position[Product.DJEMBES]
+                if Product.DJEMBES in state.position
+                else 0
+            )
+            djembes_fair_value = self.djembes_fair_value(
+                state.order_depths[Product.DJEMBES], traderObject
+            )
+            djembes_take_orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.DJEMBES,
+                    state.order_depths[Product.DJEMBES],
+                    djembes_fair_value,
+                    self.params[Product.DJEMBES]["take_width"],
+                    djembes_position,
+                    self.params[Product.DJEMBES]["prevent_adverse"],
+                    self.params[Product.DJEMBES]["adverse_volume"],
+                )
+            )
+            djembes_clear_orders, buy_order_volume, sell_order_volume = (
+                self.clear_orders(
+                    Product.DJEMBES,
+                    state.order_depths[Product.DJEMBES],
+                    djembes_fair_value,
+                    self.params[Product.DJEMBES]["clear_width"],
+                    djembes_position,
+                    buy_order_volume,
+                    sell_order_volume,
+                )
+            )
+            djembes_make_orders, _, _ = self.make_orders(
+                Product.DJEMBES,
+                state.order_depths[Product.DJEMBES],
+                djembes_fair_value,
+                djembes_position,
+                buy_order_volume,
+                sell_order_volume,
+                self.params[Product.DJEMBES]["disregard_edge"],
+                self.params[Product.DJEMBES]["join_edge"],
+                self.params[Product.DJEMBES]["default_edge"],
+            )
+            return djembes_take_orders + djembes_clear_orders + djembes_make_orders
+        return []
+    
     def get_swmid(self, order_depth) -> float:
         best_bid = max(order_depth.buy_orders.keys())
         best_ask = min(order_depth.sell_orders.keys())
@@ -766,12 +1281,12 @@ class Trader:
         )
 
     def get_synthetic_basket_order_depth(
-            self, order_depths: Dict[str, OrderDepth]
+            self, order_depths: Dict[str, OrderDepth], basket_num
     ) -> OrderDepth:
         # Constants
-        CROISSANTS_PER_BASKET = BASKET_WEIGHTS[Product.CROISSANTS]
-        JAMS_PER_BASKET = BASKET_WEIGHTS[Product.JAMS]
-        DJEMBES_PER_BASKET = BASKET_WEIGHTS[Product.DJEMBES]
+        CROISSANTS_PER_BASKET = WEIGHTS[basket_num][Product.CROISSANTS]
+        JAMS_PER_BASKET = WEIGHTS[basket_num][Product.JAMS]
+        DJEMBES_PER_BASKET = WEIGHTS[basket_num][Product.DJEMBES]
 
         # Initialize the synthetic basket order depth
         synthetic_order_price = OrderDepth()
@@ -797,6 +1312,7 @@ class Trader:
             if order_depths[Product.JAMS].sell_orders
             else float("inf")
         )
+
         djembes_best_bid = (
             max(order_depths[Product.DJEMBES].buy_orders.keys())
             if order_depths[Product.DJEMBES].buy_orders
@@ -833,7 +1349,7 @@ class Trader:
             djembes_bid_volume = (
                     order_depths[Product.DJEMBES].buy_orders[djembes_best_bid]
                     // DJEMBES_PER_BASKET
-            )
+            ) if basket_num == 1 else 1e9
             implied_bid_volume = min(
                 croissants_bid_volume, jams_bid_volume, djembes_bid_volume
             )
@@ -851,7 +1367,7 @@ class Trader:
             djembes_ask_volume = (
                     -order_depths[Product.DJEMBES].sell_orders[djembes_best_ask]
                     // DJEMBES_PER_BASKET
-            )
+            ) if basket_num == 1 else 1e9
             implied_ask_volume = min(
                 croissants_ask_volume, jams_ask_volume, djembes_ask_volume
             )
@@ -860,7 +1376,7 @@ class Trader:
         return synthetic_order_price
 
     def convert_synthetic_basket_orders(
-            self, synthetic_orders: List[Order], order_depths: Dict[str, OrderDepth]
+            self, synthetic_orders: List[Order], order_depths: Dict[str, OrderDepth], basket_num
     ) -> Dict[str, List[Order]]:
         # Initialize the dictionary to store component orders
         component_orders = {
@@ -871,7 +1387,7 @@ class Trader:
 
         # Get the best bid and ask for the synthetic basket
         synthetic_basket_order_depth = self.get_synthetic_basket_order_depth(
-            order_depths
+            order_depths, basket_num
         )
         best_bid = (
             max(synthetic_basket_order_depth.buy_orders.keys())
@@ -915,15 +1431,15 @@ class Trader:
             croissant_order = Order(
                 Product.CROISSANTS,
                 croissant_price,
-                quantity * BASKET_WEIGHTS[Product.CROISSANTS],
+                quantity * WEIGHTS[basket_num][Product.CROISSANTS],
             )
             jams_order = Order(
                 Product.JAMS,
                 jams_price,
-                quantity * BASKET_WEIGHTS[Product.JAMS],
+                quantity * WEIGHTS[basket_num][Product.JAMS],
             )
             djembes_order = Order(
-                Product.DJEMBES, djembes_price, quantity * BASKET_WEIGHTS[Product.DJEMBES]
+                Product.DJEMBES, djembes_price, quantity * WEIGHTS[basket_num][Product.DJEMBES]
             )
 
             # Add the component orders to the respective lists
@@ -938,14 +1454,16 @@ class Trader:
             target_position: int,
             basket_position: int,
             order_depths: Dict[str, OrderDepth],
+            basket_num
     ):
 
         if target_position == basket_position:
-            return None
+            return {}
 
         target_quantity = abs(target_position - basket_position)
-        basket_order_depth = order_depths[Product.PICNIC_BASKET1]
-        synthetic_order_depth = self.get_synthetic_basket_order_depth(order_depths)
+        basket_order_depth = order_depths[BASKETS[basket_num]]
+
+        synthetic_order_depth = self.get_synthetic_basket_order_depth(order_depths, basket_num)
 
         if target_position > basket_position:
             basket_ask_price = min(basket_order_depth.sell_orders.keys())
@@ -960,16 +1478,18 @@ class Trader:
             execute_volume = min(orderbook_volume, target_quantity)
 
             basket_orders = [
-                Order(Product.PICNIC_BASKET1, basket_ask_price, execute_volume)
+                Order(BASKETS[basket_num], basket_ask_price, execute_volume)
             ]
             synthetic_orders = [
-                Order(Product.SYNTHETIC, synthetic_bid_price, -execute_volume)
+                Order(SYNTHETICS[basket_num], synthetic_bid_price, -execute_volume)
             ]
 
             aggregate_orders = self.convert_synthetic_basket_orders(
-                synthetic_orders, order_depths
+                synthetic_orders, order_depths, basket_num
             )
-            aggregate_orders[Product.PICNIC_BASKET1] = basket_orders
+
+            aggregate_orders[BASKETS[basket_num]] = basket_orders
+
             return aggregate_orders
 
         else:
@@ -985,29 +1505,34 @@ class Trader:
             execute_volume = min(orderbook_volume, target_quantity)
 
             basket_orders = [
-                Order(Product.PICNIC_BASKET1, basket_bid_price, -execute_volume)
+                Order(BASKETS[basket_num], basket_bid_price, -execute_volume)
             ]
             synthetic_orders = [
-                Order(Product.SYNTHETIC, synthetic_ask_price, execute_volume)
+                Order(SYNTHETICS[basket_num], synthetic_ask_price, execute_volume)
             ]
 
             aggregate_orders = self.convert_synthetic_basket_orders(
-                synthetic_orders, order_depths
+                synthetic_orders, order_depths, basket_num
             )
-            aggregate_orders[Product.PICNIC_BASKET1] = basket_orders
+
+            aggregate_orders[BASKETS[basket_num]] = basket_orders
+
             return aggregate_orders
+
 
     def spread_orders(
             self,
+            state: TradingState,
             order_depths: Dict[str, OrderDepth],
             basket_position: int,
             spread_data: Dict[str, Any],
+            basket_num
     ):
-        if Product.PICNIC_BASKET1 not in order_depths.keys():
-            return None
+        if BASKETS[basket_num] not in order_depths.keys():
+            return {}
 
-        basket_order_depth = order_depths[Product.PICNIC_BASKET1]
-        synthetic_order_depth = self.get_synthetic_basket_order_depth(order_depths)
+        basket_order_depth = order_depths[BASKETS[basket_num]]
+        synthetic_order_depth = self.get_synthetic_basket_order_depth(order_depths, basket_num)
         basket_swmid = self.get_swmid(basket_order_depth)
         synthetic_swmid = self.get_swmid(synthetic_order_depth)
         spread = basket_swmid - synthetic_swmid
@@ -1015,40 +1540,87 @@ class Trader:
 
         if (
                 len(spread_data["spread_history"])
-                < self.params[Product.SPREAD]["spread_std_window"]
+                < self.params[SPREADS[basket_num]]["spread_std_window"]
         ):
-            return None
-        elif len(spread_data["spread_history"]) > self.params[Product.SPREAD]["spread_std_window"]:
+            if state.timestamp != 0:
+                return {}
+            if basket_num == 1:
+                # Go Short
+                return self.execute_spread_orders(
+                    -self.params[SPREADS[basket_num]]["target_position"],
+                    basket_position,
+                    order_depths,
+                    basket_num
+                )
+            else:
+               # Go long
+               return self.execute_spread_orders(
+                   self.params[SPREADS[basket_num]]["target_position"],
+                   basket_position,
+                   order_depths,
+                   basket_num
+               )
+
+
+        elif len(spread_data["spread_history"]) > self.params[SPREADS[basket_num]]["spread_std_window"]:
             spread_data["spread_history"].pop(0)
 
         spread_std = np.std(spread_data["spread_history"])
 
+
+        if basket_num == 2:
+            moving_avg = np.mean(spread_data["spread_history"][-20:])
+            diffs = [abs(moving_avg - self.params[SPREADS[basket_num]]["default_spread_mean_upper"]),
+                     abs(moving_avg - self.params[SPREADS[basket_num]]["default_spread_mean"]),
+                     abs(moving_avg - self.params[SPREADS[basket_num]]["default_spread_mean_lower"])]
+
+
+            if min(diffs) > 17: #was 15, 20
+                return {}
+
+            if diffs[0] > max(diffs[1], diffs[2]):
+                mean = self.params[SPREADS[basket_num]]["default_spread_mean_upper"]
+            elif diffs[1] > max(diffs[0], diffs[2]):
+                mean = self.params[SPREADS[basket_num]]["default_spread_mean"]
+            else:
+                mean = self.params[SPREADS[basket_num]]["default_spread_mean_lower"]
+
+            mean = self.params[SPREADS[basket_num]]["default_spread_mean"]
+
+        else:
+            mean = self.params[SPREADS[basket_num]]["default_spread_mean"]
+
+
+
         zscore = (
-                         spread - self.params[Product.SPREAD]["default_spread_mean"]
+                         spread - mean
                  ) / spread_std
 
-        if zscore >= self.params[Product.SPREAD]["zscore_threshold"]:
-            if basket_position != -self.params[Product.SPREAD]["target_position"]:
+        if zscore >= self.params[SPREADS[basket_num]]["zscore_threshold"]:
+            if basket_position != -self.params[SPREADS[basket_num]]["target_position"]:
                 return self.execute_spread_orders(
-                    -self.params[Product.SPREAD]["target_position"],
+                    -self.params[SPREADS[basket_num]]["target_position"],
                     basket_position,
                     order_depths,
+                    basket_num
                 )
 
-        if zscore <= -self.params[Product.SPREAD]["zscore_threshold"]:
-            if basket_position != self.params[Product.SPREAD]["target_position"]:
+        if zscore <= -self.params[SPREADS[basket_num]]["zscore_threshold"]:
+            if basket_position != self.params[SPREADS[basket_num]]["target_position"]:
                 return self.execute_spread_orders(
-                    self.params[Product.SPREAD]["target_position"],
+                    self.params[SPREADS[basket_num]]["target_position"],
                     basket_position,
                     order_depths,
+                    basket_num
                 )
 
         spread_data["prev_zscore"] = zscore
-        return None
+        return {}
 
     def spread_strategy(self, state: TradingState, traderObject):
-        if Product.SPREAD not in traderObject:
-            traderObject[Product.SPREAD] = {
+        basket_num = 1
+        if SPREADS[basket_num] not in traderObject:
+            traderObject[SPREADS[basket_num]] = {
                 "spread_history": [],
                 "prev_zscore": 0,
                 "clear_flag": False,
@@ -1056,15 +1628,50 @@ class Trader:
             }
 
         basket_position = (
-            state.position[Product.PICNIC_BASKET1]
-            if Product.PICNIC_BASKET1 in state.position
+            state.position[BASKETS[basket_num]]
+            if BASKETS[basket_num] in state.position
             else 0
         )
         spread_orders = self.spread_orders(
+            state,
             state.order_depths,
             basket_position,
-            traderObject[Product.SPREAD],
+            traderObject[SPREADS[basket_num]],
+            basket_num
         )
+
+        # if not spread_orders:
+            # locally trade like squid ink around here
+
+
+        return spread_orders
+
+    def spread2_strategy(self, state: TradingState, traderObject):
+        basket_num = 2
+
+        if SPREADS[basket_num] not in traderObject:
+            traderObject[SPREADS[basket_num]] = {
+                "spread_history": [],
+                "prev_zscore": 0,
+                "clear_flag": False,
+                "curr_avg": 0,
+            }
+
+        basket_position = (
+            state.position[BASKETS[basket_num]]
+            if BASKETS[basket_num] in state.position
+            else 0
+        )
+        spread_orders = self.spread_orders(
+            state,
+            state.order_depths,
+            basket_position,
+            traderObject[SPREADS[basket_num]],
+            basket_num
+        )
+
+        # if not spread_orders:
+        #     locally trade like squid ink around here
 
         return spread_orders
 
@@ -1077,7 +1684,27 @@ class Trader:
         result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
         result[Product.KELP] = self.kelp_strategy(state, traderObject)
         result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
-        result |= self.spread_strategy(state, traderObject)
+        result[Product.CROISSANTS] = self.croissants_strategy(state, traderObject)
+        result[Product.JAMS] = self.jams_strategy(state, traderObject)
+        result[Product.DJEMBES] = self.djembes_strategy(state, traderObject)
+
+        spread_strat = self.spread_strategy(state, traderObject)
+        spread2_strat = self.spread2_strategy(state, traderObject)
+        # result |= spread_strat
+
+        for product in spread2_strat:
+            if product not in result:
+                result[product] = []
+            if product in [Product.PICNIC_BASKET2]:
+                for order in spread2_strat[product]:
+                    result[product].append(order)
+
+        for product in spread_strat:
+            if product not in result:
+                result[product] = []
+            if product in [Product.PICNIC_BASKET1]:
+                for order in spread_strat[product]:
+                    result[product].append(order)
 
         conversions = 1
         traderData = jsonpickle.encode(traderObject)

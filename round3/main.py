@@ -212,6 +212,13 @@ class Product:
     SPREAD2 = "SPREAD2"
     SYNTHETIC = "SYNTHETIC"
     SYNTHETIC2 = "SYNTHETIC2"
+    VOLCANIC_ROCK = "VOLCANIC_ROCK"
+    VOLCANIC_ROCK_VOUCHER_9500 = "VOLCANIC_ROCK_VOUCHER_9500"
+    VOLCANIC_ROCK_VOUCHER_9750 = "VOLCANIC_ROCK_VOUCHER_9750"
+    VOLCANIC_ROCK_VOUCHER_10000 = "VOLCANIC_ROCK_VOUCHER_10000"
+    VOLCANIC_ROCK_VOUCHER_10250 = "VOLCANIC_ROCK_VOUCHER_10250"
+    VOLCANIC_ROCK_VOUCHER_10500 = "VOLCANIC_ROCK_VOUCHER_10500"
+
 
 PARAMS = {
     Product.RAINFOREST_RESIN: {
@@ -270,7 +277,48 @@ PARAMS = {
         "spread_std_window": 60,
         "zscore_threshold": 6,
         "target_position": 100,
-    }
+    },
+    Product.VOLCANIC_ROCK_VOUCHER_9500: {
+        "mean_volatility": 0.15959997370608378,
+        "threshold": 0.00163,
+        "strike": 10000,
+        "starting_time_to_expiry": 247 / 250,
+        "std_window": 6,
+        "zscore_threshold": 21,
+    },
+    Product.VOLCANIC_ROCK_VOUCHER_9750: {
+        "mean_volatility": 0.15959997370608378,
+        "threshold": 0.00163,
+        "strike": 10000,
+        "starting_time_to_expiry": 247 / 250,
+        "std_window": 6,
+        "zscore_threshold": 21,
+    },
+    Product.VOLCANIC_ROCK_VOUCHER_10000: {
+        "mean_volatility": 0.15959997370608378,
+        "threshold": 0.00163,
+        "strike": 10000,
+        "starting_time_to_expiry": 247 / 250,
+        "std_window": 6,
+        "zscore_threshold": 21,
+    },
+    Product.VOLCANIC_ROCK_VOUCHER_10250: {
+        "mean_volatility": 0.15959997370608378,
+        "threshold": 0.00163,
+        "strike": 10000,
+        "starting_time_to_expiry": 247 / 250,
+        "std_window": 6,
+        "zscore_threshold": 21,
+    },
+    Product.VOLCANIC_ROCK_VOUCHER_10500: {
+        "mean_volatility": 0.15959997370608378,
+        "threshold": 0.00163,
+        "strike": 10000,
+        "starting_time_to_expiry": 247 / 250,
+        "std_window": 6,
+        "zscore_threshold": 21,
+    },
+
 }
 
 BASKET_WEIGHTS = {
@@ -316,7 +364,14 @@ class Trader:
                       Product.JAMS: 350,
                       Product.DJEMBES: 60,
                       Product.PICNIC_BASKET1: 60,
-                      Product.PICNIC_BASKET2: 100}
+                      Product.PICNIC_BASKET2: 100,
+                      Product.VOLCANIC_ROCK: 400,
+                      Product.VOLCANIC_ROCK_VOUCHER_9500: 200,
+                      Product.VOLCANIC_ROCK_VOUCHER_9750: 200,
+                      Product.VOLCANIC_ROCK_VOUCHER_10000: 200,
+                      Product.VOLCANIC_ROCK_VOUCHER_10250: 200,
+                      Product.VOLCANIC_ROCK_VOUCHER_10500: 200,
+                      }
 
         self.trader_memory = {
             "ink_price_history": [],
@@ -1341,6 +1396,256 @@ class Trader:
 
         return spread_orders
 
+    def get_volcanic_rock_coupon_mid_price(
+        self, volcanic_rock_coupon_order_depth: OrderDepth, traderData: Dict[str, Any]
+    ):
+        if (
+            len(volcanic_rock_coupon_order_depth.buy_orders) > 0
+            and len(volcanic_rock_coupon_order_depth.sell_orders) > 0
+        ):
+            best_bid = max(volcanic_rock_coupon_order_depth.buy_orders.keys())
+            best_ask = min(volcanic_rock_coupon_order_depth.sell_orders.keys())
+            traderData["prev_coupon_price"] = (best_bid + best_ask) / 2
+            return (best_bid + best_ask) / 2
+        else:
+            return traderData["prev_coupon_price"]
+
+    def delta_hedge_volcanic_rock_position(
+        self,
+        volcanic_rock_order_depth: OrderDepth,
+        volcanic_rock_coupon_position: int,
+        volcanic_rock_position: int,
+        volcanic_rock_buy_orders: int,
+        volcanic_rock_sell_orders: int,
+        delta: float,
+    ) -> List[Order]:
+        """
+        Delta hedge the overall position in VOLCANIC_ROCK_COUPON by creating orders in VOLCANIC_ROCK.
+
+        Args:
+            volcanic_rock_order_depth (OrderDepth): The order depth for the VOLCANIC_ROCK product.
+            volcanic_rock_coupon_position (int): The current position in VOLCANIC_ROCK_COUPON.
+            volcanic_rock_position (int): The current position in VOLCANIC_ROCK.
+            volcanic_rock_buy_orders (int): The total quantity of buy orders for VOLCANIC_ROCK in the current iteration.
+            volcanic_rock_sell_orders (int): The total quantity of sell orders for VOLCANIC_ROCK in the current iteration.
+            delta (float): The current value of delta for the VOLCANIC_ROCK_COUPON product.
+            traderData (Dict[str, Any]): The trader data for the VOLCANIC_ROCK_COUPON product.
+
+        Returns:
+            List[Order]: A list of orders to delta hedge the VOLCANIC_ROCK_COUPON position.
+        """
+
+        target_volcanic_rock_position = -int(delta * volcanic_rock_coupon_position)
+        hedge_quantity = target_volcanic_rock_position - (
+            volcanic_rock_position + volcanic_rock_buy_orders - volcanic_rock_sell_orders
+        )
+
+        orders: List[Order] = []
+        if hedge_quantity > 0:
+            # Buy VOLCANIC_ROCK
+            best_ask = min(volcanic_rock_order_depth.sell_orders.keys())
+            quantity = min(
+                abs(hedge_quantity), -volcanic_rock_order_depth.sell_orders[best_ask]
+            )
+            quantity = min(
+                quantity,
+                self.LIMIT[Product.VOLCANIC_ROCK] - (volcanic_rock_position + volcanic_rock_buy_orders),
+            )
+            if quantity > 0:
+                orders.append(Order(Product.VOLCANIC_ROCK, best_ask, quantity))
+        elif hedge_quantity < 0:
+            # Sell VOLCANIC_ROCK
+            best_bid = max(volcanic_rock_order_depth.buy_orders.keys())
+            quantity = min(
+                abs(hedge_quantity), volcanic_rock_order_depth.buy_orders[best_bid]
+            )
+            quantity = min(
+                quantity,
+                self.LIMIT[Product.VOLCANIC_ROCK] + (volcanic_rock_position - volcanic_rock_sell_orders),
+            )
+            if quantity > 0:
+                orders.append(Order(Product.VOLCANIC_ROCK, best_bid, -quantity))
+
+        return orders
+
+    def delta_hedge_volcanic_rock_coupon_orders(
+        self,
+        volcanic_rock_order_depth: OrderDepth,
+        volcanic_rock_coupon_orders: List[Order],
+        volcanic_rock_position: int,
+        volcanic_rock_buy_orders: int,
+        volcanic_rock_sell_orders: int,
+        delta: float,
+    ) -> List[Order]:
+        """
+        Delta hedge the new orders for VOLCANIC_ROCK_COUPON by creating orders in VOLCANIC_ROCK.
+
+        Args:
+            volcanic_rock_order_depth (OrderDepth): The order depth for the VOLCANIC_ROCK product.
+            volcanic_rock_coupon_orders (List[Order]): The new orders for VOLCANIC_ROCK_COUPON.
+            volcanic_rock_position (int): The current position in VOLCANIC_ROCK.
+            volcanic_rock_buy_orders (int): The total quantity of buy orders for VOLCANIC_ROCK in the current iteration.
+            volcanic_rock_sell_orders (int): The total quantity of sell orders for VOLCANIC_ROCK in the current iteration.
+            delta (float): The current value of delta for the VOLCANIC_ROCK_COUPON product.
+
+        Returns:
+            List[Order]: A list of orders to delta hedge the new VOLCANIC_ROCK_COUPON orders.
+        """
+        if len(volcanic_rock_coupon_orders) == 0:
+            return None
+
+        net_volcanic_rock_coupon_quantity = sum(
+            order.quantity for order in volcanic_rock_coupon_orders
+        )
+        target_volcanic_rock_quantity = -int(delta * net_volcanic_rock_coupon_quantity)
+
+        orders: List[Order] = []
+        if target_volcanic_rock_quantity > 0:
+            # Buy VOLCANIC_ROCK
+            best_ask = min(volcanic_rock_order_depth.sell_orders.keys())
+            quantity = min(
+                abs(target_volcanic_rock_quantity), -volcanic_rock_order_depth.sell_orders[best_ask]
+            )
+            quantity = min(
+                quantity,
+                self.LIMIT[Product.VOLCANIC_ROCK] - (volcanic_rock_position + volcanic_rock_buy_orders),
+            )
+            if quantity > 0:
+                orders.append(Order(Product.VOLCANIC_ROCK, best_ask, quantity))
+        elif target_volcanic_rock_quantity < 0:
+            # Sell VOLCANIC_ROCK
+            best_bid = max(volcanic_rock_order_depth.buy_orders.keys())
+            quantity = min(
+                abs(target_volcanic_rock_quantity), volcanic_rock_order_depth.buy_orders[best_bid]
+            )
+            quantity = min(
+                quantity,
+                self.LIMIT[Product.VOLCANIC_ROCK] + (volcanic_rock_position - volcanic_rock_sell_orders),
+            )
+            if quantity > 0:
+                orders.append(Order(Product.VOLCANIC_ROCK, best_bid, -quantity))
+
+        return orders
+
+    def volcanic_rock_hedge_orders(
+        self,
+        volcanic_rock_order_depth: OrderDepth,
+        volcanic_rock_coupon_order_depth: OrderDepth,
+        volcanic_rock_coupon_orders: List[Order],
+        volcanic_rock_position: int,
+        volcanic_rock_coupon_position: int,
+        delta: float,
+    ) -> List[Order]:
+        if volcanic_rock_coupon_orders == None or len(volcanic_rock_coupon_orders) == 0:
+            volcanic_rock_coupon_position_after_trade = volcanic_rock_coupon_position
+        else:
+            volcanic_rock_coupon_position_after_trade = volcanic_rock_coupon_position + sum(
+                order.quantity for order in volcanic_rock_coupon_orders
+            )
+
+        target_volcanic_rock_position = -delta * volcanic_rock_coupon_position_after_trade
+
+        if target_volcanic_rock_position == volcanic_rock_position:
+            return None
+
+        target_volcanic_rock_quantity = target_volcanic_rock_position - volcanic_rock_position
+
+        orders: List[Order] = []
+        if target_volcanic_rock_quantity > 0:
+            # Buy VOLCANIC_ROCK
+            best_ask = min(volcanic_rock_order_depth.sell_orders.keys())
+            quantity = min(
+                abs(target_volcanic_rock_quantity),
+                self.LIMIT[Product.VOLCANIC_ROCK] - volcanic_rock_position,
+            )
+            if quantity > 0:
+                orders.append(Order(Product.VOLCANIC_ROCK, best_ask, round(quantity)))
+
+        elif target_volcanic_rock_quantity < 0:
+            # Sell VOLCANIC_ROCK
+            best_bid = max(volcanic_rock_order_depth.buy_orders.keys())
+            quantity = min(
+                abs(target_volcanic_rock_quantity),
+                self.LIMIT[Product.VOLCANIC_ROCK] + volcanic_rock_position,
+            )
+            if quantity > 0:
+                orders.append(Order(Product.VOLCANIC_ROCK, best_bid, -round(quantity)))
+
+        return orders
+
+    def volcanic_rock_coupon_orders(
+        self,
+        COUPON: Product,
+        volcanic_rock_coupon_order_depth: OrderDepth,
+        volcanic_rock_coupon_position: int,
+        traderData: Dict[str, Any],
+        volatility: float,
+    ) -> List[Order]:
+        traderData["past_coupon_vol"].append(volatility)   #how to do this for multiple coupons
+        if (
+            len(traderData["past_coupon_vol"])
+            < self.params[COUPON]["std_window"]
+        ):
+            return None, None
+
+        if (
+            len(traderData["past_coupon_vol"])
+            > self.params[COUPON]["std_window"]
+        ):
+            traderData["past_coupon_vol"].pop(0)
+
+        vol_z_score = (
+            volatility - self.params[COUPON]["mean_volatility"]
+        ) / np.std(traderData["past_coupon_vol"])
+        # print(f"vol_z_score: {vol_z_score}")
+        # print(f"zscore_threshold: {self.params[COUPON]['zscore_threshold']}")
+        if vol_z_score >= self.params[COUPON]["zscore_threshold"]:
+            if volcanic_rock_coupon_position != -self.LIMIT[COUPON]:
+                target_volcanic_rock_coupon_position = -self.LIMIT[COUPON]
+                if len(volcanic_rock_coupon_order_depth.buy_orders) > 0:
+                    best_bid = max(volcanic_rock_coupon_order_depth.buy_orders.keys())
+                    target_quantity = abs(
+                        target_volcanic_rock_coupon_position - volcanic_rock_coupon_position
+                    )
+                    quantity = min(
+                        target_quantity,
+                        abs(volcanic_rock_coupon_order_depth.buy_orders[best_bid]),
+                    )
+                    quote_quantity = target_quantity - quantity
+                    if quote_quantity == 0:
+                        return [Order(COUPON, best_bid, -quantity)], []
+                    else:
+                        return [Order(COUPON, best_bid, -quantity)], [
+                            Order(COUPON, best_bid, -quote_quantity)
+                        ]
+
+        elif vol_z_score <= -self.params[COUPON]["zscore_threshold"]:
+            if volcanic_rock_coupon_position != self.LIMIT[COUPON]:
+                target_volcanic_rock_coupon_position = self.LIMIT[COUPON]
+                if len(volcanic_rock_coupon_order_depth.sell_orders) > 0:
+                    best_ask = min(volcanic_rock_coupon_order_depth.sell_orders.keys())
+                    target_quantity = abs(
+                        target_volcanic_rock_coupon_position - volcanic_rock_coupon_position
+                    )
+                    quantity = min(
+                        target_quantity,
+                        abs(volcanic_rock_coupon_order_depth.sell_orders[best_ask]),
+                    )
+                    quote_quantity = target_quantity - quantity
+                    if quote_quantity == 0:
+                        return [Order(COUPON, best_ask, quantity)], []
+                    else:
+                        return [Order(COUPON, best_ask, quantity)], [
+                            Order(COUPON, best_ask, quote_quantity)
+                        ]
+
+        return None, None
+
+
+
+
+
+
 
 
     def run(self, state: TradingState):
@@ -1349,6 +1654,7 @@ class Trader:
             traderObject = jsonpickle.decode(state.traderData)
 
         result = {}
+        result[Product.VOLCANIC_ROCK] = []
         # result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
         # result[Product.KELP] = self.kelp_strategy(state, traderObject)
         # result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
@@ -1377,6 +1683,86 @@ class Trader:
         # if state.timestamp == 10_000:
         #     result["VOLCANIC_ROCK_VOUCHER_9500"] = [Order("VOLCANIC_ROCK_VOUCHER_9500", 0, -1)]
 
+
+        #loop through this once per coupon
+        for COUPON in [Product.VOLCANIC_ROCK_VOUCHER_9500, Product.VOLCANIC_ROCK_VOUCHER_9750, Product.VOLCANIC_ROCK_VOUCHER_10000, Product.VOLCANIC_ROCK_VOUCHER_10250, Product.VOLCANIC_ROCK_VOUCHER_10500]:
+            if COUPON not in traderObject:
+                traderObject[COUPON] = {
+                    "prev_coupon_price": 0,
+                    "past_coupon_vol": [],
+                }
+
+            if (
+                COUPON in self.params
+                and COUPON in state.order_depths
+            ):
+                volcanic_rock_coupon_position = (
+                    state.position[COUPON]
+                    if COUPON in state.position
+                    else 0
+                )
+
+                volcanic_rock_position = (
+                    state.position[Product.VOLCANIC_ROCK]
+                    if Product.VOLCANIC_ROCK in state.position
+                    else 0
+                )
+                # print(f"volcanic_rock_coupon_position: {volcanic_rock_coupon_position}")
+                # print(f"volcanic_rock_position: {volcanic_rock_position}")
+                volcanic_rock_order_depth = state.order_depths[Product.VOLCANIC_ROCK]
+                volcanic_rock_coupon_order_depth = state.order_depths[COUPON]
+                volcanic_rock_mid_price = (
+                    min(volcanic_rock_order_depth.buy_orders.keys())
+                    + max(volcanic_rock_order_depth.sell_orders.keys())
+                ) / 2
+                volcanic_rock_coupon_mid_price = self.get_volcanic_rock_coupon_mid_price(
+                    volcanic_rock_coupon_order_depth, traderObject[COUPON]
+                )
+                tte = (
+                    self.params[COUPON]["starting_time_to_expiry"]
+                    - (state.timestamp) / 1000000 / 250
+                )
+                volatility = BlackScholes.implied_volatility(
+                    volcanic_rock_coupon_mid_price,
+                    volcanic_rock_mid_price,
+                    self.params[COUPON]["strike"],
+                    tte,
+                )
+                delta = BlackScholes.delta(
+                    volcanic_rock_mid_price,
+                    self.params[COUPON]["strike"],
+                    tte,
+                    volatility,
+                )
+
+                volcanic_rock_coupon_take_orders, volcanic_rock_coupon_make_orders = (
+                    self.volcanic_rock_coupon_orders(
+                        COUPON,
+                        state.order_depths[COUPON],
+                        volcanic_rock_coupon_position,
+                        traderObject[COUPON],
+                        volatility,
+                    )
+                )
+
+                volcanic_rock_orders = self.volcanic_rock_hedge_orders(
+                    state.order_depths[Product.VOLCANIC_ROCK],
+                    state.order_depths[COUPON],
+                    volcanic_rock_coupon_take_orders,
+                    volcanic_rock_position,
+                    volcanic_rock_coupon_position,
+                    delta,
+                )
+
+                if volcanic_rock_coupon_take_orders != None or volcanic_rock_coupon_make_orders != None:
+                    result[COUPON] = (
+                        volcanic_rock_coupon_take_orders + volcanic_rock_coupon_make_orders
+                    )
+                    # print(f"VOLCANIC_ROCK_COUPON: {result[Product.VOLCANIC_ROCK_COUPON]}")
+
+                if volcanic_rock_orders != None:
+                    result[Product.VOLCANIC_ROCK].extend(volcanic_rock_orders)
+                    # print(f"VOLCANIC_ROCK: {result[Product.VOLCANIC_ROCK]}")
 
 
 

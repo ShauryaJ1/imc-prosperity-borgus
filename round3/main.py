@@ -1608,6 +1608,7 @@ class Trader:
     def volcanic_rock_coupon_orders(
         self,
         COUPON: str,
+        volcanic_rock_mid_price: float,
         volcanic_rock_coupon_order_depth: OrderDepth,
         volcanic_rock_coupon_position: int,
         traderData: Dict[str, Any],
@@ -1616,7 +1617,7 @@ class Trader:
     ) -> List[Order]:
 
         coupon_mid = self.get_volcanic_rock_coupon_mid_price(volcanic_rock_coupon_order_depth, traderData)
-        call_fair_price = BlackScholes.black_scholes_call(coupon_mid, 
+        call_fair_price = BlackScholes.black_scholes_call(volcanic_rock_mid_price, 
             self.params[COUPON]["strike"], tte, volatility)
 
         take_orders, buy_order_volume, sell_order_volume = self.take_orders(
@@ -1656,26 +1657,26 @@ class Trader:
 
         result = {}
         result[Product.VOLCANIC_ROCK] = []
-        result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
-        result[Product.KELP] = self.kelp_strategy(state, traderObject)
-        result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
-        spread_strat = self.spread_strategy(state, traderObject)
-        spread2_strat = self.spread2_strategy(state, traderObject)
+        # result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
+        # result[Product.KELP] = self.kelp_strategy(state, traderObject)
+        # result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
+        # spread_strat = self.spread_strategy(state, traderObject)
+        # spread2_strat = self.spread2_strategy(state, traderObject)
         # result |= spread_strat
         # #
-        for product in spread2_strat:
-            if product not in result:
-                result[product] = []
-            if product in [Product.PICNIC_BASKET2]:
-                for order in spread2_strat[product]:
-                    result[product].append(order)
+        # for product in spread2_strat:
+        #     if product not in result:
+        #         result[product] = []
+        #     if product in [Product.PICNIC_BASKET2]:
+        #         for order in spread2_strat[product]:
+        #             result[product].append(order)
         # #
-        for product in spread_strat:
-            if product not in result:
-                result[product] = []
-            if product in [Product.PICNIC_BASKET1]:
-                for order in spread_strat[product]:
-                    result[product].append(order)
+        # for product in spread_strat:
+        #     if product not in result:
+        #         result[product] = []
+        #     if product in [Product.PICNIC_BASKET1]:
+        #         for order in spread_strat[product]:
+        #             result[product].append(order)
         #
         # if state.timestamp == 0:
         #     result["VOLCANIC_ROCK_VOUCHER_9500"] = [Order("VOLCANIC_ROCK_VOUCHER_9500", 1_100, 1)]
@@ -1746,6 +1747,7 @@ class Trader:
                 volcanic_rock_coupon_take_orders, volcanic_rock_coupon_make_orders = (
                     self.volcanic_rock_coupon_orders(
                         COUPON,
+                        volcanic_rock_mid_price,
                         copied_order_depths,
                         volcanic_rock_coupon_position,
                         traderObject[COUPON],

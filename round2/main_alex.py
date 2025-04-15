@@ -290,7 +290,7 @@ class Trader:
         self.trader_memory = {
             "ink_price_history": [],
             "kelp_price_history": [],
-            "volitality_arr": [],
+            # "volitality_arr": [],
             "z_score_arr": [],
             "croissants_price_history": [],
             "djembes_price_history": [],
@@ -528,7 +528,7 @@ class Trader:
             # adjust with momentum?
             price_history: List[float] = self.trader_memory.get("ink_price_history", [])
 
-            volitality_array: List[float] = self.trader_memory.get("volitality_arr", [])
+            # volitality_array: List[float] = self.trader_memory.get("volitality_arr", [])
 
             z_score_array: List[float] = self.trader_memory.get("z_score_arr", [])
 
@@ -577,14 +577,14 @@ class Trader:
                 # short_ema = (1 - beta)
                 fair = exponential_weighted_avg
 
-                volitality_array.append(np.std(price_history[-1:-1 - window:-1]))
+                # volitality_array.append(np.std(price_history[-1:-1 - window:-1]))
                 z_score_array.append((curr_thing - np.mean(working_prices)) / np.std(working_prices))
 
             # update price history
             price_history.append(mmmid_price)
 
             self.trader_memory["ink_price_history"] = price_history
-            self.trader_memory["volitality_arr"] = volitality_array
+            # self.trader_memory["volitality_arr"] = volitality_array
             self.trader_memory["z_score_arr"] = z_score_array
 
             # if timestamp == 958000:

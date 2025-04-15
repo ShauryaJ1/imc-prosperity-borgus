@@ -280,11 +280,11 @@ PARAMS = {
         "target_position": 100,
     },
     Product.VOLCANIC_ROCK_VOUCHER_9500: {
-        "mean_volatility": 0.024,
+        "mean_volatility": 0.005,
         "strike": 9500,
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
-        "zscore_threshold": 1,
+        "zscore_threshold": 21,
         "take_width": 1, 
         "clear_width": 0,
         "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
@@ -294,11 +294,11 @@ PARAMS = {
         "adverse_volume": 15,
     },
     Product.VOLCANIC_ROCK_VOUCHER_9750: {
-        "mean_volatility": 0.024,
+        "mean_volatility": 0.005,
         "strike": 9750,
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
-        "zscore_threshold": 1,
+        "zscore_threshold": 21,
         "take_width": 1,
         "clear_width": 0,
         "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
@@ -308,11 +308,11 @@ PARAMS = {
         "adverse_volume": 15,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10000: {
-        "mean_volatility": 0.024,
+        "mean_volatility": 0.005,
         "strike": 10000,
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
-        "zscore_threshold": 1,
+        "zscore_threshold": 21,
         "take_width": 1,
         "clear_width": 0,
         "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
@@ -322,11 +322,11 @@ PARAMS = {
         "adverse_volume": 15,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10250: {
-        "mean_volatility": 0.024,
+        "mean_volatility": 0.005,
         "strike": 10250,
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
-        "zscore_threshold": 1,
+        "zscore_threshold": 21,
         "take_width": 1,
         "clear_width": 0,
         "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
@@ -336,12 +336,12 @@ PARAMS = {
         "adverse_volume": 15,
     },
     Product.VOLCANIC_ROCK_VOUCHER_10500: {
-        "mean_volatility": 0.024,
+        "mean_volatility": 0.005,
         # "threshold": 0.00163,
         "strike": 10500,
         "starting_time_to_expiry": 247 / 250,
         "std_window": 3,
-        "zscore_threshold": 1,
+        "zscore_threshold": 21,
         "take_width": 1,
         "clear_width": 0,
         "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
@@ -405,11 +405,19 @@ class Trader:
                       Product.VOLCANIC_ROCK_VOUCHER_10500: 200,
                       }
 
+        self.past_prices = {
+            Product.VOLCANIC_ROCK: [],
+        }
+
+        self.log_returns = {
+            Product.VOLCANIC_ROCK: [],
+        }
+
         self.trader_memory = {
             "ink_price_history": [],
             "kelp_price_history": [],
             "volitality_arr": [],
-            "z_score_arr": []
+            "z_score_arr": [],
         }
 
     def take_best_orders(
@@ -1721,19 +1729,32 @@ class Trader:
                     min(volcanic_rock_order_depth.buy_orders.keys())
                     + max(volcanic_rock_order_depth.sell_orders.keys())
                 ) / 2
+
+
+                self.past_prices[Product.VOLCANIC_ROCK].append(volcanic_rock_mid_price)
+                if (len(self.past_prices[Product.VOLCANIC_ROCK]) >= 2):
+                    self.log_returns[Product.VOLCANIC_ROCK].append(log(self.past_prices[Product.VOLCANIC_ROCK][-1]) - log(self.past_prices[Product.VOLCANIC_ROCK][-2]))
+
+
                 volcanic_rock_coupon_mid_price = self.get_volcanic_rock_coupon_mid_price(
                     volcanic_rock_coupon_order_depth, traderObject[COUPON]
                 )
                 tte = (
-                    self.params[COUPON]["starting_time_to_expiry"]
-                    - (state.timestamp) / 1000000 / 250
+                    (4 - self.params[COUPON]["starting_time_to_expiry"]
+                    - (state.timestamp) / 1000000) / ( 365)
                 )
-                volatility = BlackScholes.implied_volatility(
-                    volcanic_rock_coupon_mid_price,
-                    volcanic_rock_mid_price,
-                    self.params[COUPON]["strike"],
-                    tte,
-                )
+                
+                volatility = self.params[COUPON]["mean_volatility"]
+
+                if (len(self.log_returns[Product.VOLCANIC_ROCK]) > self.params[COUPON]["std_window"]):
+                    volatility = np.std(self.log_returns[Product.VOLCANIC_ROCK][-self.params[COUPON]["std_window"]:]) * sqrt(365) + np.finfo(float).eps
+                
+                # volatility = BlackScholes.implied_volatility(
+                #     volcanic_rock_coupon_mid_price,
+                #     volcanic_rock_mid_price,
+                #     self.params[COUPON]["strike"],
+                #     tte,
+                # )
 
                 delta = BlackScholes.delta(
                     volcanic_rock_mid_price,
@@ -1755,15 +1776,19 @@ class Trader:
                         volatility,
                     )
                 )
+                if (COUPON == Product.VOLCANIC_ROCK_VOUCHER_9500) or not result[Product.VOLCANIC_ROCK]: #just do it once
+                    volcanic_rock_orders = self.volcanic_rock_hedge_orders(
+                        state.order_depths[Product.VOLCANIC_ROCK],
+                        state.order_depths[COUPON],
+                        volcanic_rock_coupon_take_orders,
+                        volcanic_rock_position,
+                        volcanic_rock_coupon_position,
+                        delta,
+                    )
+                    if volcanic_rock_orders != None:
+                        result[Product.VOLCANIC_ROCK].extend(volcanic_rock_orders)
+                        # print(f"VOLCANIC_ROCK: {result[Product.VOLCANIC_ROCK]}")
 
-                volcanic_rock_orders = self.volcanic_rock_hedge_orders(
-                    state.order_depths[Product.VOLCANIC_ROCK],
-                    state.order_depths[COUPON],
-                    volcanic_rock_coupon_take_orders,
-                    volcanic_rock_position,
-                    volcanic_rock_coupon_position,
-                    delta,
-                )
 
                 if volcanic_rock_coupon_take_orders != None or volcanic_rock_coupon_make_orders != None:
                     result[COUPON] = (
@@ -1771,10 +1796,7 @@ class Trader:
                     )
                     # print(f"VOLCANIC_ROCK_COUPON: {result[Product.VOLCANIC_ROCK_COUPON]}")
 
-                if volcanic_rock_orders != None:
-                    result[Product.VOLCANIC_ROCK].extend(volcanic_rock_orders)
-                    # print(f"VOLCANIC_ROCK: {result[Product.VOLCANIC_ROCK]}")
-
+                
 
 
         conversions = 1

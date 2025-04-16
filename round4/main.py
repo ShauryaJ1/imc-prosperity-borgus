@@ -219,6 +219,7 @@ class Product:
     VOLCANIC_ROCK_VOUCHER_10000 = "VOLCANIC_ROCK_VOUCHER_10000"
     VOLCANIC_ROCK_VOUCHER_10250 = "VOLCANIC_ROCK_VOUCHER_10250"
     VOLCANIC_ROCK_VOUCHER_10500 = "VOLCANIC_ROCK_VOUCHER_10500"
+    MAGNIFICENT_MACARONS = "MAGNIFICENT_MACARONS"
 
 
 PARAMS = {
@@ -233,6 +234,19 @@ PARAMS = {
         "soft_position_limit": 35,
     },
     Product.KELP: {
+        "take_width": 1,
+        "clear_width": 0,
+        "prevent_adverse": True,
+        "adverse_volume": 15,
+        "reversion_beta": -0.229,
+        "disregard_edge": 1,
+        "join_edge": 0,
+        "default_edge": 1,
+        "momentum_weight": 0.40,
+        "history_window": 3,
+        "momentum_cutoff": 0.1
+    },
+    Product.MAGNIFICENT_MACARONS: {
         "take_width": 1,
         "clear_width": 0,
         "prevent_adverse": True,
@@ -455,6 +469,7 @@ class Trader:
                       Product.VOLCANIC_ROCK_VOUCHER_10000: 200,
                       Product.VOLCANIC_ROCK_VOUCHER_10250: 200,
                       Product.VOLCANIC_ROCK_VOUCHER_10500: 200,
+                      Product.MAGNIFICENT_MACARONS: 75,
                       }
 
         self.past_prices = {
@@ -475,6 +490,7 @@ class Trader:
             "croissants_price_history": [],
             "djembes_price_history": [],
             "jams_price_history": [],
+            "magnificent_macarons_price_history":[],
         }
 
     def take_best_orders(
@@ -984,6 +1000,66 @@ class Trader:
 
         return orders, buy_order_volume, sell_order_volume
 
+    
+    def magnificent_macarons_strategy(self, state: TradingState, traderObject):
+        if Product.MAGNIFICENT_MACARONS in self.params and Product.MAGNIFICENT_MACARONS in state.order_depths:
+
+            magnificent_macarons_position = (
+                state.position[Product.MAGNIFICENT_MACARONS]
+                if Product.MAGNIFICENT_MACARONS in state.position
+                else 0
+            )
+
+            # raise Exception(state.observations.conversionObservations)
+            # if state.observations.conversionObservations:
+            #     raise Exception(state.observations)
+            obs = state.observations.conversionObservations.get("MAGNIFICENT_MACARONS", None)
+
+            if obs is None:
+                return []
+            
+            buy_price = obs.askPrice + obs.transportFees + obs.importTariff
+
+            magnificent_macarons_fair_value = buy_price
+
+            #spam short, sell at buyprice + 1
+
+            
+            magnificent_macarons_take_orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.CROISSANTS,
+                    state.order_depths[Product.CROISSANTS],
+                    magnificent_macarons_fair_value,
+                    self.params[Product.CROISSANTS]["take_width"],
+                    magnificent_macarons_position,
+                    self.params[Product.CROISSANTS]["prevent_adverse"],
+                    self.params[Product.CROISSANTS]["adverse_volume"],
+                )
+            )
+            magnificent_macarons_clear_orders, buy_order_volume, sell_order_volume = (
+                self.clear_orders(
+                    Product.CROISSANTS,
+                    state.order_depths[Product.CROISSANTS],
+                    magnificent_macarons_fair_value,
+                    self.params[Product.CROISSANTS]["clear_width"],
+                    magnificent_macarons_position,
+                    buy_order_volume,
+                    sell_order_volume,
+                )
+            )
+            magnificent_macarons_make_orders, _, _ = self.make_orders(
+                Product.CROISSANTS,
+                state.order_depths[Product.CROISSANTS],
+                magnificent_macarons_fair_value,
+                magnificent_macarons_position,
+                buy_order_volume,
+                sell_order_volume,
+                self.params[Product.CROISSANTS]["disregard_edge"],
+                self.params[Product.CROISSANTS]["join_edge"],
+                self.params[Product.CROISSANTS]["default_edge"],
+            )
+            return magnificent_macarons_take_orders + magnificent_macarons_clear_orders + magnificent_macarons_make_orders
+        return []
 
     def croissants_strategy(self, state: TradingState, traderObject):
         if Product.CROISSANTS in self.params and Product.CROISSANTS in state.order_depths:
@@ -2162,6 +2238,7 @@ class Trader:
         result[Product.JAMS] = self.jams_strategy(state, traderObject)
         result[Product.DJEMBES] = self.djembes_strategy(state, traderObject)
         result[Product.VOLCANIC_ROCK] = self.volcanic_rock_strategy(state, traderObject)
+        result[Product.MAGNIFICENT_MACARONS] = self.magnificent_macarons_strategy(state, traderObject)
 
         spread_strat = self.spread_strategy(state, traderObject)
         spread2_strat = self.spread2_strategy(state, traderObject)

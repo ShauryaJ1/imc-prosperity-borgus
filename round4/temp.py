@@ -12,6 +12,10 @@ from math import log, sqrt, exp
 from statistics import NormalDist
 
 
+# if momentum going down short it immediately (sell everything)
+# if momentum going up, buy everything (long position wow?)
+
+
 class Logger:
     def __init__(self) -> None:
         self.logs = ""
@@ -167,6 +171,11 @@ class BlackScholes:
         d1 = (
             log(spot) - log(strike) + (0.5 * volatility * volatility) * time_to_expiry
         ) / (volatility * sqrt(time_to_expiry))
+        # print(f"d1: {d1}")
+        # print(f"vol: {volatility}")
+        # print(f"spot: {spot}")
+        # print(f"strike: {strike}")
+        # print(f"time: {time_to_expiry}")
         return NormalDist().pdf(d1) * (spot * sqrt(time_to_expiry)) / 100
 
     @staticmethod
@@ -248,9 +257,7 @@ PARAMS = {
         "default_edge": 1,
         "momentum_weight": 0.40,
         "history_window": 3,
-        "momentum_cutoff": 0.1,
-        "prev_sunlight": -1,
-        "prev_price": -1,
+        "momentum_cutoff": 0.1
     },
     Product.SQUID_INK: {
         "take_width": 1,
@@ -905,7 +912,7 @@ class Trader:
             for price in order_depth.buy_orders.keys()
             if price < fair_value - disregard_edge
         ]
-        
+
         best_ask_above_fair = min(asks_above_fair) if len(asks_above_fair) > 0 else None
         best_bid_below_fair = max(bids_below_fair) if len(bids_below_fair) > 0 else None
 
@@ -1002,62 +1009,38 @@ class Trader:
                 if Product.MAGNIFICENT_MACARONS in state.position
                 else 0
             )
+
+            # if state.timestamp == 10000:
+            #     raise Exception(state.observations)
+            # raise Exception(state.observations.conversionObservations)
+            # if state.observations.conversionObservations:
+            #     raise Exception(state.observations)
             obs = state.observations.conversionObservations.get("MAGNIFICENT_MACARONS", None)
 
-            best_price_to_buy = min(price for price in state.order_depths["MAGNIFICENT_MACARONS"].sell_orders.keys())
-
-            best_price_to_sell = max(price for price in state.order_depths["MAGNIFICENT_MACARONS"].buy_orders.keys())
-            fair_value = round((best_price_to_buy + best_price_to_sell)/2)
+            if obs is None:
+                return []
             
-            #if increasing, buy. if decreasing, sell
-            # orders = []
-            # prev_price = self.params[Product.MAGNIFICENT_MACARONS]["prev_price"]
-            # logger.logs += f"current price: {fair_value}, prev_price: {prev_price}\n"
-            # if self.params[Product.MAGNIFICENT_MACARONS]["prev_price"] != -1:
-            #     if fair_value < self.params[Product.MAGNIFICENT_MACARONS]["prev_price"]: #decreasing
-            #         sell_quantity = -self.LIMIT["MAGNIFICENT_MACARONS"] - magnificent_macarons_position
-            #         if sell_quantity < 0:
-            #             orders.append(Order("MAGNIFICENT_MACARONS", best_price_to_sell, sell_quantity))  # Sell order
-            #     elif fair_value > self.params[Product.MAGNIFICENT_MACARONS]["prev_price"]: #increasing
-            #         buy_quantity = self.LIMIT["MAGNIFICENT_MACARONS"] - magnificent_macarons_position
-            #         if buy_quantity > 0:
-            #             orders.append(Order("MAGNIFICENT_MACARONS", round(best_price_to_buy - 1), buy_quantity))
-            # self.params[Product.MAGNIFICENT_MACARONS]["prev_price"] = fair_value
+            buy_price = obs.askPrice + obs.transportFees + obs.importTariff
 
-            # return orders
-            if obs:
-                buy_price = obs.askPrice + obs.transportFees + obs.importTariff
-                sell_price =  obs.bidPrice - (obs.transportFees + obs.exportTariff)
 
-                best_price_to_buy = min(price for price in state.order_depths["MAGNIFICENT_MACARONS"].sell_orders.keys())
+            sell_price =  (obs.askPrice + obs.bidPrice)/2 + 2 + obs.transportFees + obs.exportTariff
 
-                best_price_to_sell = max(price for price in state.order_depths["MAGNIFICENT_MACARONS"].buy_orders.keys())
 
-                
-                orders = []
-                #to buy from pristine cuisine, i'll pay askPrice + transport + importtariff
+            #spam short, sell at buyprice + 1
+            conversions -= magnificent_macarons_position
 
-                #to sell to pristine cuisine, i'll make bidPrice -(transport + exporttariff)
-                if (obs.sunlightIndex > self.params[Product.MAGNIFICENT_MACARONS]["prev_sunlight"]):
-                    #sunlight increasing, short
-                    self.params[Product.MAGNIFICENT_MACARONS]["prev_sunlight"] = obs.sunlightIndex
+            orders = []
 
-                    sell_quantity = -self.LIMIT["MAGNIFICENT_MACARONS"] + magnificent_macarons_position
-                    if sell_quantity < 0:
-                        orders.append(Order("MAGNIFICENT_MACARONS", round(best_price_to_sell + 1), sell_quantity))  # Sell order
+            buy_quantity = self.LIMIT["MAGNIFICENT_MACARONS"] - (magnificent_macarons_position)
+            if buy_quantity > 0:
+                orders.append(Order("MAGNIFICENT_MACARONS", round(buy_price), buy_quantity))  # Buy order
 
-                elif (obs.sunlightIndex < self.params[Product.MAGNIFICENT_MACARONS]["prev_sunlight"]):
-                    #sunlight decreasing, long
-                    self.params[Product.MAGNIFICENT_MACARONS]["prev_sunlight"] = obs.sunlightIndex
+            sell_quantity = self.LIMIT["MAGNIFICENT_MACARONS"] + (magnificent_macarons_position)
 
-                    buy_quantity = self.LIMIT["MAGNIFICENT_MACARONS"]* 0- magnificent_macarons_position
-                    if buy_quantity > 0:
-                        orders.append(Order("MAGNIFICENT_MACARONS", round(best_price_to_buy - 1), buy_quantity))
-
-                else:
-                    #maybe some market making idk
-                    pass
-                return orders
+            if sell_quantity > 0:
+                orders.append(Order("MAGNIFICENT_MACARONS", round(sell_price), -sell_quantity))  # Sell order
+            
+            return orders
         return []
 
     def croissants_strategy(self, state: TradingState, traderObject):
@@ -2228,161 +2211,162 @@ class Trader:
         if state.traderData != None and state.traderData != "":
             traderObject = jsonpickle.decode(state.traderData)
         conversions = 0
+
+
+        # if state.timestamp == 10000:
+        #     raise Exception(state.observations)
         
         result = {}
+        result[Product.VOLCANIC_ROCK] = []
+        result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
+        result[Product.KELP] = self.kelp_strategy(state, traderObject)
+        result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
+        result[Product.CROISSANTS] = self.croissants_strategy(state, traderObject)
+        result[Product.JAMS] = self.jams_strategy(state, traderObject)
+        result[Product.DJEMBES] = self.djembes_strategy(state, traderObject)
+        result[Product.VOLCANIC_ROCK] = self.volcanic_rock_strategy(state, traderObject)
         result[Product.MAGNIFICENT_MACARONS] = self.magnificent_macarons_strategy(state, traderObject, conversions)
-        # result[Product.RAINFOREST_RESIN] = self.resin_strategy(state, traderObject)
-        # result[Product.KELP] = self.kelp_strategy(state, traderObject)
-        # result[Product.SQUID_INK] = self.ink_strategy(state, traderObject)
-        # result[Product.CROISSANTS] = self.croissants_strategy(state, traderObject)
-        # result[Product.JAMS] = self.jams_strategy(state, traderObject)
-        # result[Product.DJEMBES] = self.djembes_strategy(state, traderObject)
-        # result[Product.VOLCANIC_ROCK] = self.volcanic_rock_strategy(state, traderObject)
-        
 
-        # spread_strat = self.spread_strategy(state, traderObject)
-        # spread2_strat = self.spread2_strategy(state, traderObject)
+        spread_strat = self.spread_strategy(state, traderObject)
+        spread2_strat = self.spread2_strategy(state, traderObject)
         # #
-        # for product in spread2_strat:
-        #     if product not in result:
-        #         result[product] = []
-        #     if product in [Product.PICNIC_BASKET2]:
-        #         for order in spread2_strat[product]:
-        #             result[product].append(order)
-        # #
-        # for product in spread_strat:
-        #     if product not in result:
-        #         result[product] = []
-        #     if product in [Product.PICNIC_BASKET1]:
-        #         for order in spread_strat[product]:
-        #             result[product].append(order)
-        
-
-        # # ###### loop through this once per coupon
-        # for COUPON in [Product.VOLCANIC_ROCK_VOUCHER_9500,
-        #                Product.VOLCANIC_ROCK_VOUCHER_9750,
-        #                Product.VOLCANIC_ROCK_VOUCHER_10000,
-        #                Product.VOLCANIC_ROCK_VOUCHER_10250,
-        #                Product.VOLCANIC_ROCK_VOUCHER_10500]:
-        #     if COUPON not in traderObject:
-        #         traderObject[COUPON] = {
-        #             "prev_coupon_price": 0,
-        #             "past_coupon_vol": [],
-        #         }
-
-        #     if (
-        #         COUPON in self.params
-        #         and COUPON in state.order_depths
-        #     ):
-        #         volcanic_rock_coupon_position = (
-        #             state.position[COUPON]
-        #             if COUPON in state.position
-        #             else 0
-        #         )
-
-        #         volcanic_rock_position = (
-        #             state.position[Product.VOLCANIC_ROCK]
-        #             if Product.VOLCANIC_ROCK in state.position
-        #             else 0
-        #         )
-        #         # print(f"volcanic_rock_coupon_position: {volcanic_rock_coupon_position}")
-        #         # print(f"volcanic_rock_position: {volcanic_rock_position}")
-        #         volcanic_rock_order_depth = state.order_depths[Product.VOLCANIC_ROCK]
-        #         volcanic_rock_coupon_order_depth = state.order_depths[COUPON]
-        #         volcanic_rock_mid_price = (
-        #             max(volcanic_rock_order_depth.buy_orders.keys())
-        #             + min(volcanic_rock_order_depth.sell_orders.keys())
-        #         ) / 2
+        for product in spread2_strat:
+            if product not in result:
+                result[product] = []
+            if product in [Product.PICNIC_BASKET2]:
+                for order in spread2_strat[product]:
+                    result[product].append(order)
+        #
+        for product in spread_strat:
+            if product not in result:
+                result[product] = []
+            if product in [Product.PICNIC_BASKET1]:
+                for order in spread_strat[product]:
+                    result[product].append(order)
 
 
-        #         self.past_prices[Product.VOLCANIC_ROCK].append(volcanic_rock_mid_price)
-        #         if (len(self.past_prices[Product.VOLCANIC_ROCK]) >= 2):
-        #             self.log_returns[Product.VOLCANIC_ROCK].append(log(self.past_prices[Product.VOLCANIC_ROCK][-1]) - log(self.past_prices[Product.VOLCANIC_ROCK][-2]))
+        #loop through this once per coupon
+        for COUPON in [Product.VOLCANIC_ROCK_VOUCHER_9500,
+                       Product.VOLCANIC_ROCK_VOUCHER_9750,
+                       Product.VOLCANIC_ROCK_VOUCHER_10000,
+                       Product.VOLCANIC_ROCK_VOUCHER_10250,
+                       Product.VOLCANIC_ROCK_VOUCHER_10500]:
+            if COUPON not in traderObject:
+                traderObject[COUPON] = {
+                    "prev_coupon_price": 0,
+                    "past_coupon_vol": [],
+                }
+
+            if (
+                COUPON in self.params
+                and COUPON in state.order_depths
+            ):
+                volcanic_rock_coupon_position = (
+                    state.position[COUPON]
+                    if COUPON in state.position
+                    else 0
+                )
+
+                volcanic_rock_position = (
+                    state.position[Product.VOLCANIC_ROCK]
+                    if Product.VOLCANIC_ROCK in state.position
+                    else 0
+                )
+                # print(f"volcanic_rock_coupon_position: {volcanic_rock_coupon_position}")
+                # print(f"volcanic_rock_position: {volcanic_rock_position}")
+                volcanic_rock_order_depth = state.order_depths[Product.VOLCANIC_ROCK]
+                volcanic_rock_coupon_order_depth = state.order_depths[COUPON]
+                volcanic_rock_mid_price = (
+                    max(volcanic_rock_order_depth.buy_orders.keys())
+                    + min(volcanic_rock_order_depth.sell_orders.keys())
+                ) / 2
 
 
-        #         volcanic_rock_coupon_mid_price = self.get_volcanic_rock_coupon_mid_price(
-        #             volcanic_rock_coupon_order_depth, traderObject[COUPON]
-        #         )
-        #         tte = (
-        #             (8 - 0*self.params[COUPON]["starting_time_to_expiry"]
-        #             - (state.timestamp) / 1000000) / ( 365)
-        #         )
+                self.past_prices[Product.VOLCANIC_ROCK].append(volcanic_rock_mid_price)
+                if (len(self.past_prices[Product.VOLCANIC_ROCK]) >= 2):
+                    self.log_returns[Product.VOLCANIC_ROCK].append(log(self.past_prices[Product.VOLCANIC_ROCK][-1]) - log(self.past_prices[Product.VOLCANIC_ROCK][-2]))
+
+
+                volcanic_rock_coupon_mid_price = self.get_volcanic_rock_coupon_mid_price(
+                    volcanic_rock_coupon_order_depth, traderObject[COUPON]
+                )
+                tte = (
+                    (8 - 0*self.params[COUPON]["starting_time_to_expiry"]
+                    - (state.timestamp) / 1000000) / ( 365)
+                )
                 
                 
-        #         volatility = self.params[COUPON]["mean_volatility"]
+                volatility = self.params[COUPON]["mean_volatility"]
 
-        #         if (len(self.log_returns[Product.VOLCANIC_ROCK]) > self.params[COUPON]["std_window"]):
-        #             volatility = np.std(self.log_returns[Product.VOLCANIC_ROCK][-self.params[COUPON]["std_window"]:]) * sqrt(365) + np.finfo(float).eps
+                if (len(self.log_returns[Product.VOLCANIC_ROCK]) > self.params[COUPON]["std_window"]):
+                    volatility = np.std(self.log_returns[Product.VOLCANIC_ROCK][-self.params[COUPON]["std_window"]:]) * sqrt(365) + np.finfo(float).eps
                 
-        #         volatility = 0.15
+                volatility = 0.15
 
-        #         m_t = log(self.params[COUPON]["strike"]/volcanic_rock_mid_price)/sqrt(tte)
+                m_t = log(self.params[COUPON]["strike"]/volcanic_rock_mid_price)/sqrt(tte)
 
-        #         volatility = 0.2333333 * m_t**2 + 0.147
-
-                
-                
-
-        #         #temp_begin
-        #         implied_volatility = BlackScholes.implied_volatility(
-        #             volcanic_rock_coupon_mid_price,
-        #             volcanic_rock_mid_price,
-        #             self.params[COUPON]["strike"],
-        #             tte,
-        #         )
-        #         call_fair_price = BlackScholes.black_scholes_call(volcanic_rock_mid_price, 
-        #         self.params[COUPON]["strike"], tte, volatility)
-
-        #         result[COUPON] = []
-
-        #         logger.logs += f"{COUPON}: {call_fair_price}\n"
-
-        #         if (implied_volatility > volatility + 0.02):
-        #             #go long
-        #             buy_quantity = self.LIMIT[COUPON] - (volcanic_rock_coupon_position)
-        #             if buy_quantity > 0:
-        #                 if volcanic_rock_coupon_order_depth.sell_orders.keys():
-        #                     result[COUPON].append(Order(COUPON, min(volcanic_rock_coupon_order_depth.sell_orders.keys()), buy_quantity))  # Buy order
-        #                 else:
-        #                     result[COUPON].append(Order(COUPON, round(volcanic_rock_coupon_mid_price), buy_quantity))  # Buy order
-
-        #         elif (implied_volatility < volatility - 0.02):
-        #             #go short
-        #             sell_quantity = -self.LIMIT[COUPON] - (volcanic_rock_coupon_position)
-        #             if sell_quantity < 0:
-        #                 if volcanic_rock_coupon_order_depth.buy_orders.keys():
-        #                     result[COUPON].append(Order(COUPON, max(volcanic_rock_coupon_order_depth.buy_orders.keys()), sell_quantity))  # Buy order
-        #                 else: result[COUPON].append(Order(COUPON, round(volcanic_rock_coupon_mid_price), sell_quantity))  # Buy order
-
-        #         #temp_end
+                volatility = 0.2333333 * m_t**2 + 0.147
 
                 
-        #         # volcanic_rock_coupon_take_orders, volcanic_rock_coupon_make_orders = (
-        #         #     self.volcanic_rock_coupon_orders(
-        #         #         COUPON,
-        #         #         volcanic_rock_mid_price,
-        #         #         copied_order_depths,
-        #         #         volcanic_rock_coupon_position,
-        #         #         traderObject[COUPON],
-        #         #         tte,
-        #         #         volatility,
-        #         #     )
-        #         # )
+    
+
+                delta = BlackScholes.delta(
+                    volcanic_rock_mid_price,
+                    self.params[COUPON]["strike"],
+                    tte,
+                    volatility,
+                )
+
+                copied_order_depths = copy.deepcopy(state.order_depths[COUPON])
+   
+                implied_volatility = BlackScholes.implied_volatility(
+                    volcanic_rock_coupon_mid_price,
+                    volcanic_rock_mid_price,
+                    self.params[COUPON]["strike"],
+                    tte,
+                )
+                call_fair_price = BlackScholes.black_scholes_call(volcanic_rock_mid_price, 
+                self.params[COUPON]["strike"], tte, volatility)
+
+                result[COUPON] = []
+
+                logger.logs += f"{COUPON}: {call_fair_price}\n"
+
+                if (implied_volatility > volatility + 0.02):
+                    #go long
+                    buy_quantity = self.LIMIT[COUPON] - (volcanic_rock_coupon_position)
+                    if buy_quantity > 0:
+                        if volcanic_rock_coupon_order_depth.sell_orders.keys():
+                            result[COUPON].append(Order(COUPON, min(volcanic_rock_coupon_order_depth.sell_orders.keys()), buy_quantity))  # Buy order
+                        else:
+                            result[COUPON].append(Order(COUPON, round(volcanic_rock_coupon_mid_price), buy_quantity))  # Buy order
+
+                elif (implied_volatility < volatility - 0.02):
+                    #go short
+                    sell_quantity = -self.LIMIT[COUPON] - (volcanic_rock_coupon_position)
+                    if sell_quantity < 0:
+                        if volcanic_rock_coupon_order_depth.buy_orders.keys():
+                            result[COUPON].append(Order(COUPON, max(volcanic_rock_coupon_order_depth.buy_orders.keys()), sell_quantity))  # Buy order
+                        else: result[COUPON].append(Order(COUPON, round(volcanic_rock_coupon_mid_price), sell_quantity))  # Buy order
+
+
                 
 
-        #         self.trader_memory["m_t"].append(log(9500/volcanic_rock_mid_price)/sqrt(tte))
-        #         self.trader_memory["v_t"].append(BlackScholes.implied_volatility(
-        #         volcanic_rock_coupon_mid_price,
-        #         volcanic_rock_mid_price,
-        #         self.params[COUPON]["strike"],
-        #         tte,
-        #         ))
+                self.trader_memory["m_t"].append(log(9500/volcanic_rock_mid_price)/sqrt(tte))
+                self.trader_memory["v_t"].append(BlackScholes.implied_volatility(
+                volcanic_rock_coupon_mid_price,
+                volcanic_rock_mid_price,
+                self.params[COUPON]["strike"],
+                tte,
+                ))
+
+
                 
 
 
+        # conversions = 1
         traderData = jsonpickle.encode(traderObject)
 
         logger.flush(state, result, conversions, state.traderData)
 
         return result, conversions, traderData
-
